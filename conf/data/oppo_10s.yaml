@@ -4,7 +4,7 @@
 # Age: 27.22 ± 3.31
 # Preprocessing done:
 # 1. Remove activityID=0
-data_root: /data/UKBB/oppo_33hz_w10_o5
+data_root: /data/ssl_wearable/data/downstream/oppo_33hz_w10_o5
 X_path: "${data.data_root}/X.npy"
 Y_path:  "${data.data_root}/Y.npy"
 PID_path:  "${data.data_root}/pid.npy"
