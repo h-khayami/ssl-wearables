@@ -708,6 +708,7 @@ def main(cfg):
         my_device = "cuda:0"  # use the first GPU as master
     else:
         my_device = "cpu"
+    print("Device:", my_device)
     # Expected shape of downstream X and Y
     # X: T x (Sample Rate*Epoch len) x 3
     # Y: T,
