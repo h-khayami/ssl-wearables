@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - data: wisdm_10s
+  - data: mymove_10s_5c
   - evaluation: all
   - model: resnet
   - dataloader: ten_sec

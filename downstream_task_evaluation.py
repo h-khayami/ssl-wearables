@@ -447,6 +447,120 @@ def train_test_rf(
 
     return results
 
+def evaluate_harnet(
+    train_idxs,
+    test_idxs,
+    X_feats,
+    y,
+    groups,
+    cfg,
+    my_device,
+    repo='OxWearables/ssl-wearables',
+    labels=None,
+    encoder=None,
+):
+    """
+    Evaluate HARNet model on test data without training
+    
+    Args:
+        test_idxs: Indices for test data
+        X_feats: Input features
+        y: Target labels
+        groups: Group identifiers for the samples
+        cfg: Configuration object
+        my_device: Device to run the model on (cuda/cpu)
+        repo: Repository path for loading HARNet
+        labels: Optional label mapping
+        encoder: Optional encoder for labels
+    
+    Returns:
+        List of classification results for each subject
+    """
+    # Load pre-trained HARNet model
+    model = torch.hub.load(repo, 'harnet10', class_num=cfg.data.output_size, pretrained=True)
+    model = model.to(my_device)
+    model.eval()
+
+    # Setup test data loader
+    _, _, test_loader, _ = setup_data(
+        train_idxs, test_idxs, X_feats, y, groups, cfg
+    )
+
+    # Predict on test data
+    y_test, y_test_pred, pid_test = mlp_predict(
+        model, test_loader, my_device, cfg
+    )
+
+    # Calculate results for each subject
+    my_pids = np.unique(pid_test)
+    results = []
+    for current_pid in my_pids:
+        subject_filter = current_pid == pid_test
+        subject_true = y_test[subject_filter]
+        subject_pred = y_test_pred[subject_filter]
+
+        result = classification_scores(subject_true, subject_pred)
+        results.append(result)
+    
+    return results
+def evaluate_harnet_classification(X_feats, y, cfg, my_device, logger, groups=None, repo='OxWearables/ssl-wearables'):
+    """Evaluate HARNet model on the given data and generate classification reports.
+    Reports a variety of performance metrics based on multiple runs.
+    
+    Args:
+        X_feats: Input features
+        y: Target labels
+        cfg: Configuration object
+        my_device: Device to run model on (cuda/cpu)
+        logger: Logger object for recording progress
+        groups: Optional group identifiers for the samples
+        repo: Repository path for loading HARNet
+    """
+    # Handle label encoding for classification
+    le = None
+    labels = None
+    if cfg.data.task_type == "classify":
+        le = preprocessing.LabelEncoder()
+        labels = np.unique(y)
+        le.fit(y)
+        y = le.transform(y)
+    else:
+        y = y * 1.0
+
+    # Convert DataFrame to numpy if needed
+    if isinstance(X_feats, pd.DataFrame):
+        X_feats = X_feats.to_numpy()
+
+    # Ensure input data has correct shape for HARNet (3 channels)
+    if len(X_feats.shape) == 2:
+        # Reshape 2D data to 3D (batch_size, 3, sequence_length)
+        seq_length = X_feats.shape[1]
+        X_feats = X_feats.reshape(-1, 3, seq_length // 3)
+    
+        # Get cross-validation folds and collect results
+    folds = get_train_test_split(cfg, X_feats, y, groups)
+    results = []
+    
+    for train_idxs, test_idxs in folds:
+        result = evaluate_harnet(
+            train_idxs,
+            test_idxs,
+            X_feats,
+            y,
+            groups,
+            cfg,
+            my_device,
+            repo=repo,
+            labels=labels,
+            encoder=le,
+        )
+        results.extend(result)
+
+    # Create report directory and generate classification report
+    pathlib.Path(cfg.report_root).mkdir(parents=True, exist_ok=True)
+    classification_report(results, cfg.report_path)
+
+    return results
 
 def evaluate_feats(X_feats, Y, cfg, logger, groups=None, task_type="classify"):
     """Train a random forest with X_feats and Y.
@@ -480,8 +594,8 @@ def evaluate_feats(X_feats, Y, cfg, logger, groups=None, task_type="classify"):
     classification_report(results, cfg.report_path)
 
 
-def handcraft_features(xyz, sample_rate):
     """Our baseline handcrafted features. xyz is a window of shape (N,3)"""
+def handcraft_features(xyz, sample_rate):
 
     feats = {}
     feats["xMean"], feats["yMean"], feats["zMean"] = np.mean(xyz, axis=0)
@@ -673,7 +787,7 @@ def main(cfg):
     logger = logging.getLogger(cfg.evaluation.evaluation_name)
     logger.setLevel(logging.INFO)
     now = datetime.now()
-    dt_string = now.strftime("%d-%m-%Y_%H:%M:%S")
+    dt_string = now.strftime("%Y-%m-%d_%H:%M:%S")
     log_dir = os.path.join(
         get_original_cwd(),
         cfg.evaluation.evaluation_name + "_" + dt_string + ".log",
@@ -819,7 +933,32 @@ def main(cfg):
 
         print("Train-test Flip_net+MLP...")
         evaluate_mlp(X_downsampled, Y, cfg, my_device, logger, groups=P)
+    if cfg.evaluation.harnet_ft:
+        print(
+            """\n
+        ##############################################
+                    HARNET pretrained
+        ##############################################
+        """
+        )
+        # Original X shape: (1861541, 1000, 3) for capture24
+        print("Original X shape:", X.shape)
 
+        input_size = cfg.evaluation.input_size
+        if X.shape[1] == input_size:
+            print("No need to downsample")
+            X_downsampled = X
+        else:
+            X_downsampled = resize(X, input_size)
+        X_downsampled = X_downsampled.astype(
+            "f4"
+        )  # PyTorch defaults to float32
+        # channels first: (N,M,3) -> (N,3,M). PyTorch uses channel first format
+        X_downsampled = np.transpose(X_downsampled, (0, 2, 1))
+        print("X transformed shape:", X_downsampled.shape)
+
+        print("Evaluate HARNET...")
+        evaluate_harnet_classification(X_downsampled, Y, cfg, my_device, logger, groups=P)
 
 if __name__ == "__main__":
     main()

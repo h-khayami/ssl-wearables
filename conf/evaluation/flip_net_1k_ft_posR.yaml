@@ -9,6 +9,7 @@ model_path: "/data/UKBB/SSL/day_sec_10k/logs/models"
 flip_net: false
 flip_net_ft: true
 flip_net_random_mlp: false
+harnet_ft: false
 load_weights: true
 freeze_weight: false
 postR: 5

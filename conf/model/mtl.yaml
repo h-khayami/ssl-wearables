@@ -5,4 +5,5 @@ mixed_precision: false
 resnet: false
 resnet_big: false
 patience: 10
-
+is_ae: false
+resnet_version: -1
