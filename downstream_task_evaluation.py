@@ -13,6 +13,7 @@ import hydra
 from omegaconf import OmegaConf
 from torchvision import transforms
 import pathlib
+import json
 
 # SSL net
 from sslearning.models.accNet import cnn1, SSLNET, Resnet, EncoderMLP
@@ -23,6 +24,7 @@ from sslearning.data.data_loader import NormalDataset
 from torch.utils.data import DataLoader
 from torch.autograd import Variable
 import torch.optim as optim
+from torchsummary import summary # print model summary
 from sslearning.pytorchtools import EarlyStopping
 from sslearning.data.datautils import RandomSwitchAxis, RotationAxis
 import torch
@@ -335,12 +337,14 @@ def train_test_mlp(
     groups,
     cfg,
     my_device,
+    log_dir,
     labels=None,
     encoder=None,
 ):
     model = setup_model(cfg, my_device)
     if cfg.is_verbose:
         print(model)
+        summary(model, (3, cfg.evaluation.input_size))
     train_loader, val_loader, test_loader, weights = setup_data(
         train_idxs, test_idxs, X_feats, y, groups, cfg
     )
@@ -361,13 +365,20 @@ def train_test_mlp(
         subject_filter = current_pid == pid_test
         subject_true = y_test[subject_filter]
         subject_pred = y_test_pred[subject_filter]
-
-        result = classification_scores(subject_true, subject_pred)
+        
+        # log_dir = log_dir + f"{str(current_pid)}.csv"
+        # Make sure the parent directory exists, not the file itself
+        pathlib.Path(os.path.dirname(log_dir)).mkdir(parents=True, exist_ok=True)
+        print(f"Final log_dir: {log_dir}")
+        print(f"Directory exists? {os.path.isdir(os.path.dirname(log_dir))}")
+        print(f"File exists? {os.path.isfile(f'{log_dir}{str(current_pid)}.csv')}")
+        # result = classification_scores(subject_true, subject_pred, save=True, save_path=os.path.join(cfg.report_root, f"{str(current_pid)}.csv"))
+        result = classification_scores(subject_true, subject_pred, save=True, save_path=os.path.join(log_dir, f"{str(current_pid)}.csv"))
         results.append(result)
     return results
 
 
-def evaluate_mlp(X_feats, y, cfg, my_device, logger, groups=None):
+def evaluate_mlp(X_feats, y, cfg, my_device, logger, log_dir, groups=None):
     """Train a random forest with X_feats and Y.
     Report a variety of performance metrics based on multiple runs."""
 
@@ -380,6 +391,11 @@ def evaluate_mlp(X_feats, y, cfg, my_device, logger, groups=None):
         y = le.transform(y)
     else:
         y = y * 1.0
+    # Create a mapping and ensure keys and values are standard Python types
+    label_mapping = {str(k): int(v) for k, v in zip(le.classes_, le.transform(le.classes_))}
+    print(label_mapping)  # {'Cycling': 0, 'Running': 1, 'Walking': 2}
+    with open(os.path.join(log_dir, "label_mapping.json"), "w") as f:
+        json.dump(label_mapping, f)
 
     if isinstance(X_feats, pd.DataFrame):
         X_feats = X_feats.to_numpy()
@@ -396,17 +412,21 @@ def evaluate_mlp(X_feats, y, cfg, my_device, logger, groups=None):
             groups,
             cfg,
             my_device,
+            log_dir,
             labels=labels,
             encoder=le,
         )
         results.extend(result)
 
-    pathlib.Path(cfg.report_root).mkdir(parents=True, exist_ok=True)
-    classification_report(results, cfg.report_path)
+    pathlib.Path(log_dir).mkdir(parents=True, exist_ok=True)
+    report_filename = os.path.basename(cfg.report_path)
+    log_path = os.path.join(log_dir, report_filename)
+    classification_report(results, log_path)
+    
 
 
 def train_test_rf(
-    train_idxs, test_idxs, X_feats, Y, cfg, groups, task_type="classify"
+    train_idxs, test_idxs, X_feats, Y, cfg, groups, log_dir, task_type="classify"
 ):
     X_train, X_test = X_feats[train_idxs], X_feats[test_idxs]
     Y_train, Y_test = Y[train_idxs], Y[test_idxs]
@@ -435,14 +455,15 @@ def train_test_rf(
 
     model.fit(X_train, Y_train)
     Y_test_pred = model.predict(X_test)
-
     results = []
     for current_pid in np.unique(group_test):
         subject_filter = group_test == current_pid
         subject_true = Y_test[subject_filter]
         subject_pred = Y_test_pred[subject_filter]
-
-        result = classification_scores(subject_true, subject_pred)
+        log_dir = log_dir + str(current_pid)+".csv"
+        # Make sure the parent directory exists, not the file itself
+        pathlib.Path(os.path.dirname(log_dir)).mkdir(parents=True, exist_ok=True)
+        result = classification_scores(subject_true, subject_pred, save = True, save_path=log_dir)
         results.append(result)
 
     return results
@@ -455,6 +476,7 @@ def evaluate_harnet(
     groups,
     cfg,
     my_device,
+    log_dir,
     repo='OxWearables/ssl-wearables',
     labels=None,
     encoder=None,
@@ -490,7 +512,6 @@ def evaluate_harnet(
     y_test, y_test_pred, pid_test = mlp_predict(
         model, test_loader, my_device, cfg
     )
-
     # Calculate results for each subject
     my_pids = np.unique(pid_test)
     results = []
@@ -498,12 +519,14 @@ def evaluate_harnet(
         subject_filter = current_pid == pid_test
         subject_true = y_test[subject_filter]
         subject_pred = y_test_pred[subject_filter]
-
-        result = classification_scores(subject_true, subject_pred)
+        log_dir = log_dir + str(current_pid)+".csv"
+        # Make sure the parent directory exists, not the file itself
+        pathlib.Path(os.path.dirname(log_dir)).mkdir(parents=True, exist_ok=True)
+        result = classification_scores(subject_true, subject_pred, save = True, save_path=log_dir)
         results.append(result)
     
     return results
-def evaluate_harnet_classification(X_feats, y, cfg, my_device, logger, groups=None, repo='OxWearables/ssl-wearables'):
+def evaluate_harnet_classification(X_feats, y, cfg, my_device, logger, log_dir, groups=None, repo='OxWearables/ssl-wearables'):
     """Evaluate HARNet model on the given data and generate classification reports.
     Reports a variety of performance metrics based on multiple runs.
     
@@ -550,6 +573,7 @@ def evaluate_harnet_classification(X_feats, y, cfg, my_device, logger, groups=No
             groups,
             cfg,
             my_device,
+            log_dir,
             repo=repo,
             labels=labels,
             encoder=le,
@@ -557,8 +581,10 @@ def evaluate_harnet_classification(X_feats, y, cfg, my_device, logger, groups=No
         results.extend(result)
 
     # Create report directory and generate classification report
-    pathlib.Path(cfg.report_root).mkdir(parents=True, exist_ok=True)
-    classification_report(results, cfg.report_path)
+    pathlib.Path(log_dir).mkdir(parents=True, exist_ok=True)
+    report_filename = os.path.basename(cfg.report_path)
+    log_dir = os.path.join(log_dir, report_filename)
+    classification_report(results, log_dir)
 
     return results
 
@@ -591,6 +617,8 @@ def evaluate_feats(X_feats, Y, cfg, logger, groups=None, task_type="classify"):
 
     print(results)
     pathlib.Path(cfg.report_root).mkdir(parents=True, exist_ok=True)
+    # report_filename = os.path.basename(cfg.report_path)
+    # log_dir = os.path.join(log_dir, report_filename)
     classification_report(results, cfg.report_path)
 
 
@@ -792,6 +820,11 @@ def main(cfg):
         get_original_cwd(),
         cfg.evaluation.evaluation_name + "_" + dt_string + ".log",
     )
+    dtm_string = now.strftime("%Y-%m-%d_%H-%M")
+    # log_dir_r = os.path.join(cfg.report_root, dtm_string)
+    # os.makedirs(log_dir_r, exist_ok=True)
+    log_dir_r = pathlib.Path(os.path.expanduser(cfg.report_root)) / dtm_string
+    log_dir_r.mkdir(parents=True, exist_ok=True)
     cfg.model_path = os.path.join(get_original_cwd(), dt_string + "tmp.pt")
     fh = logging.FileHandler(log_dir)
     fh.setLevel(logging.INFO)
@@ -932,7 +965,7 @@ def main(cfg):
         print("X transformed shape:", X_downsampled.shape)
 
         print("Train-test Flip_net+MLP...")
-        evaluate_mlp(X_downsampled, Y, cfg, my_device, logger, groups=P)
+        evaluate_mlp(X_downsampled, Y, cfg, my_device, logger,log_dir_r, groups=P)
     if cfg.evaluation.harnet_ft:
         print(
             """\n
@@ -958,7 +991,7 @@ def main(cfg):
         print("X transformed shape:", X_downsampled.shape)
 
         print("Evaluate HARNET...")
-        evaluate_harnet_classification(X_downsampled, Y, cfg, my_device, logger, groups=P)
+        evaluate_harnet_classification(X_downsampled, Y, cfg, my_device, logger, log_dir_r, groups=P)
 
 if __name__ == "__main__":
     main()

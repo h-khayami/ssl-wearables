@@ -3,6 +3,7 @@ import sklearn.metrics as metrics
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import os
 
 
 def summarise_scores(scores, name=None, average=False):
@@ -26,7 +27,12 @@ def summarise_epoch_scores(scores):
     return avg_epoch_class_score
 
 
-def classification_scores(Y_test, Y_test_pred):
+def classification_scores(Y_test, Y_test_pred, save=False, save_path=None):
+    if save and save_path is not None:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        df = pd.DataFrame({"Y_test": Y_test, "Y_test_pred": Y_test_pred})
+        print(f"Attempting to save CSV at: {save_path}")
+        df.to_csv(save_path, index=False)
     cohen_kappa = metrics.cohen_kappa_score(Y_test, Y_test_pred)
     precision = metrics.precision_score(
         Y_test, Y_test_pred, average="macro", zero_division=0
@@ -37,18 +43,25 @@ def classification_scores(Y_test, Y_test_pred):
     f1 = metrics.f1_score(
         Y_test, Y_test_pred, average="macro", zero_division=0
     )
+    f1_weighted = metrics.f1_score(
+        Y_test, Y_test_pred, average='weighted', zero_division=0
+    )
+    confusion_matrix = metrics.confusion_matrix(Y_test, Y_test_pred)
+    
 
-    return cohen_kappa, precision, recall, f1
+    return cohen_kappa, precision, recall, f1, f1_weighted, confusion_matrix
 
 
 def save_report(
-    precision_list, recall_list, f1_list, cohen_kappa_list, report_path
+    precision_list, recall_list, f1_list, cohen_kappa_list,  f1_weighted_list, confusion_matrix_list, report_path
 ):
     data = {
         "precision": precision_list,
         "recall": recall_list,
         "f1": f1_list,
         "kappa": cohen_kappa_list,
+        "f1_weighted": f1_weighted_list,
+        "confusion_matrix": confusion_matrix_list,
     }
 
     df = pd.DataFrame(data)
@@ -62,9 +75,11 @@ def classification_report(results, report_path):
     precision_list = [result[1] for result in results]
     recall_list = [result[2] for result in results]
     f1_list = [result[3] for result in results]
+    f1_weighted_list = [result[4] for result in results]
+    confusion_matrix_list = [result[5] for result in results]
 
     save_report(
-        precision_list, recall_list, f1_list, cohen_kappa_list, report_path
+        precision_list, recall_list, f1_list, cohen_kappa_list, f1_weighted_list, confusion_matrix_list, report_path
     )
 
 

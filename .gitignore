@@ -18,7 +18,7 @@ data/*
 *.pt
 *.mdl
 *.png
-*.ipynb
+# *.ipynb
 
 # Org-mode
 .org-id-locations
