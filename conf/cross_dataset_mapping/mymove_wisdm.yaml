@@ -1,0 +1,29 @@
+catch: catch
+chips: sedentary_sitting_other
+clapping: clapping
+dribbling: dribbling
+drinking: drinking
+folding: folding
+jogging: upright_stepping_vigorous
+kicking: kicking
+pasta: sedentary_sitting_other
+sandwich: sedentary_sitting_other
+sitting: sedentary_sitting_other
+soup: sedentary_sitting_other
+stairs: upright_stepping_low
+standing: upright_standing 
+teeth: upright_standing
+typing: sedentary_sitting_other
+walking: upright_stepping_moderate
+writing: sedentary_sitting_other
+
+
+
+# sedentary_lying:
+# sedentary_sitting_other:
+# sedentary_sitting_transport:
+# upright_standing:
+# upright_stepping_low:
+# upright_stepping_moderate:
+# upright_stepping_vigorous:
+# cycling:

@@ -11,7 +11,7 @@ flip_net_ft: true
 flip_net_random_mlp: false
 harnet_ft: false
 load_weights: true
-freeze_weight: false
+freeze_weight: true
 flip_net_path: /data/ssl_wearable/model/mtl_best.mdl
 input_size: 300  # input size after resampling the raw data
 subR: 1

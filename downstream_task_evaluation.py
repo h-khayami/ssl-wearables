@@ -113,21 +113,29 @@ def get_class_weights(y):
     print(weights)
     return weights
 
-
 def setup_data(train_idxs, test_idxs, X_feats, Y, groups, cfg):
-    tmp_X_train, X_test = X_feats[train_idxs], X_feats[test_idxs]
-    tmp_Y_train, Y_test = Y[train_idxs], Y[test_idxs]
-    group_train, group_test = groups[train_idxs], groups[test_idxs]
+    if len(train_idxs) > 0:
+        tmp_X_train = X_feats[train_idxs]
+        tmp_Y_train = Y[train_idxs]
+        group_train = groups[train_idxs]
+    else:
+        tmp_X_train, tmp_Y_train, group_train = None, None, None
 
+    if len(test_idxs) > 0:
+        X_test = X_feats[test_idxs]
+        Y_test = Y[test_idxs]
+        group_test = groups[test_idxs]
+    else:
+        X_test, Y_test, group_test = None, None, None
     # when we are not using all the subjects
-    if cfg.data.subject_count != -1:
+    if cfg.data.subject_count != -1 and tmp_X_train is not None:
         tmp_X_train, tmp_Y_train, group_train = get_data_with_subject_count(
             cfg.data.subject_count, tmp_X_train, tmp_Y_train, group_train
         )
 
     # When changing the number of training data, we
     # will keep the test data fixed
-    if cfg.data.held_one_subject_out:
+    if cfg.data.held_one_subject_out and tmp_X_train is not None:
         folds = LeaveOneGroupOut().split(
             tmp_X_train, tmp_Y_train, groups=group_train
         )
@@ -141,42 +149,47 @@ def setup_data(train_idxs, test_idxs, X_feats, Y, groups, cfg):
             tmp_Y_train[final_train_idxs],
             tmp_Y_train[final_val_idxs],
         )
-    else:
+    elif tmp_X_train is not None:
         # We further divide up train into 70/10 train/val split
         X_train, X_val, Y_train, Y_val = train_val_split(
             tmp_X_train, tmp_Y_train, group_train
         )
+    else:
+        X_train, X_val, Y_train, Y_val = None, None, None, None
+
 
     my_transform = None
     if cfg.augmentation:
         my_transform = transforms.Compose([RandomSwitchAxis(), RotationAxis()])
     train_dataset = NormalDataset(
         X_train, Y_train, name="train", isLabel=True, transform=my_transform
-    )
-    val_dataset = NormalDataset(X_val, Y_val, name="val", isLabel=True)
+    ) if X_train is not None else None
+    val_dataset = NormalDataset(
+        X_val, Y_val, name="val", isLabel=True
+        ) if X_val is not None else None
     test_dataset = NormalDataset(
         X_test, Y_test, pid=group_test, name="test", isLabel=True
-    )
+    )  if X_test is not None else None
 
     train_loader = DataLoader(
         train_dataset,
         batch_size=cfg.data.batch_size,
         shuffle=True,
         num_workers=cfg.evaluation.num_workers,
-    )
+    ) if train_dataset is not None else None
     val_loader = DataLoader(
         val_dataset,
         batch_size=cfg.data.batch_size,
         num_workers=cfg.evaluation.num_workers,
-    )
+    ) if val_dataset is not None else None
     test_loader = DataLoader(
         test_dataset,
         batch_size=cfg.data.batch_size,
         num_workers=cfg.evaluation.num_workers,
-    )
+    ) if test_dataset is not None else None
 
     weights = []
-    if cfg.data.task_type == "classify":
+    if cfg.data.task_type == "classify" and Y_train is not None:
         weights = get_class_weights(Y_train)
     return train_loader, val_loader, test_loader, weights
 
@@ -379,7 +392,7 @@ def train_test_mlp(
 
 
 def evaluate_mlp(X_feats, y, cfg, my_device, logger, log_dir, groups=None):
-    """Train a random forest with X_feats and Y.
+    """Train a MLP with X_feats and Y.
     Report a variety of performance metrics based on multiple runs."""
 
     le = None
@@ -621,6 +634,93 @@ def evaluate_feats(X_feats, Y, cfg, logger, groups=None, task_type="classify"):
     # log_dir = os.path.join(log_dir, report_filename)
     classification_report(results, cfg.report_path)
 
+def train_and_save_model(train_loader, val_loader, cfg, my_device, weights):
+    model = setup_model(cfg, my_device)
+    train_mlp(model, train_loader, val_loader, cfg, my_device, weights)
+    # torch.save(model.state_dict(), model_path)
+    # return model_path
+def evaluate_saved_model(test_loader, cfg, my_device, label_mapping, log_dir):
+    model = init_model(cfg, my_device)
+    model.load_state_dict(torch.load(cfg.model_path))
+    model.eval()
+
+    y_test, y_test_pred, pid_test = mlp_predict(model, test_loader, my_device, cfg)
+
+    my_pids = np.unique(pid_test)
+    results = []
+    for current_pid in my_pids:
+        subject_filter = current_pid == pid_test
+        subject_true = y_test[subject_filter]
+        subject_pred = y_test_pred[subject_filter]
+        subject_log_dir = os.path.join(log_dir, f"{str(current_pid)}.csv")
+        os.makedirs(os.path.dirname(subject_log_dir), exist_ok=True)
+        result = classification_scores(subject_true, subject_pred, save=True, save_path=subject_log_dir)
+        results.append(result)
+       
+    return results
+
+def cross_dataset_evaluation(train_data, test_data, cfg, my_device, log_dir):
+    # Load dataset1 (train_data)
+    X_train = train_data[0]
+    Y_train = train_data[1]
+    P_train = train_data[2]
+
+    # Load dataset2 (test_data)
+    X_test = test_data[0]
+    Y_test = test_data[1]
+    P_test = test_data[2]
+
+    # Label encoding for dataset1
+    le_train = preprocessing.LabelEncoder()
+    le_train.fit(Y_train)
+    Y_train = le_train.transform(Y_train)
+
+    # Label encoding for dataset2
+    le_test = preprocessing.LabelEncoder()
+    le_test.fit(Y_test)
+    Y_test = le_test.transform(Y_test)
+
+    # Create label mapping between dataset1 and dataset2
+    label_mapping = {str(k): int(v) for k, v in zip(le_train.classes_, le_test.transform(le_train.classes_))}
+    with open(os.path.join(log_dir, "label_mapping.json"), "w") as f:
+        json.dump(label_mapping, f)
+
+    # Setup data loaders for training and validation
+    train_loader, val_loader, _, weights = setup_data(
+        np.arange(len(X_train)), np.array([]), X_train, Y_train, P_train, cfg
+    )
+    _, _, test_loader, _ = setup_data(
+        np.array([]), np.arange(len(X_test)), X_test, Y_test, P_test, cfg
+    )
+
+    # Train the model on dataset1 and save it
+    train_and_save_model(train_loader, val_loader, cfg, my_device, weights)
+
+    # Evaluate the saved model on dataset2
+    results = evaluate_saved_model(test_loader, cfg, my_device, label_mapping, log_dir)
+    return results
+
+def evaluate_pretrained_model(test_data, cfg, my_device, log_dir):
+    X_test = test_data[0]
+    Y_test = test_data[1]
+    P_test = test_data[2]
+    
+    le_test = preprocessing.LabelEncoder()
+    le_test.fit(Y_test)
+    Y_test = le_test.transform(Y_test)
+
+    _, _, test_loader, _ = setup_data(
+        np.array([]), np.arange(len(X_test)), X_test, Y_test, P_test, cfg
+    )
+    # Create a mapping and ensure keys and values are standard Python types
+    label_mapping = {str(k): int(v) for k, v in zip(le_test.classes_, le_test.transform(le_test.classes_))}
+    print(label_mapping)  # {'Cycling': 0, 'Running': 1, 'Walking': 2}
+    with open(os.path.join(log_dir, "eval_label_mapping.json"), "w") as f:
+        json.dump(label_mapping, f)
+    # Evaluate the saved model on dataset2
+    results = evaluate_saved_model(test_loader, cfg, my_device, label_mapping, log_dir)
+    return results
+
 
     """Our baseline handcrafted features. xyz is a window of shape (N,3)"""
 def handcraft_features(xyz, sample_rate):
@@ -806,9 +906,24 @@ def load_weights(weight_path, model, my_device):
     else:
         model.load_state_dict(model_dict)
     print("%d Weights loaded" % len(pretrained_dict))
+def downsample_data(X, input_size):
+    # Original X shape: (1861541, 1000, 3) for capture24
+    print("Original X shape:", X.shape)
 
+    if X.shape[1] == input_size:
+        print("No need to downsample")
+        X_downsampled = X
+    else:
+        X_downsampled = resize(X, input_size)
+    X_downsampled = X_downsampled.astype(
+        "f4"
+    )  # PyTorch defaults to float32
+    # channels first: (N,M,3) -> (N,3,M). PyTorch uses channel first format
+    X_downsampled = np.transpose(X_downsampled, (0, 2, 1))
+    print("X transformed shape:", X_downsampled.shape)
+    return X_downsampled
 
-@hydra.main(config_path="conf", config_name="config_eva")
+@hydra.main(config_path="conf", config_name="config_eva_cross_data")
 def main(cfg):
     """Evaluate hand-crafted vs deep-learned features"""
 
@@ -825,7 +940,8 @@ def main(cfg):
     # os.makedirs(log_dir_r, exist_ok=True)
     log_dir_r = pathlib.Path(os.path.expanduser(cfg.report_root)) / dtm_string
     log_dir_r.mkdir(parents=True, exist_ok=True)
-    cfg.model_path = os.path.join(get_original_cwd(), dt_string + "tmp.pt")
+    if cfg.use_pretrained == False:
+        cfg.model_path = os.path.join(get_original_cwd(), dt_string + "tmp.pt")
     fh = logging.FileHandler(log_dir)
     fh.setLevel(logging.INFO)
     logger.addHandler(fh)
@@ -870,128 +986,138 @@ def main(cfg):
         Y_qnt.index = ("min", "25th", "median", "75th", "max")
         print(Y_qnt)
 
-    if cfg.evaluation.feat_hand_crafted:
-        print(
-            """\n
-        ##############################################
-                    Hand-crafted features+RF
-        ##############################################
+    if cfg.use_pretrained == False:
+
+        if cfg.evaluation.feat_hand_crafted:
+            print(
+                """\n
+            ##############################################
+                        Hand-crafted features+RF
+            ##############################################
+            """
+            )
+
+            # Extract hand-crafted features
+            print("Extracting features...")
+            X_handfeats = pd.DataFrame(
+                [handcraft_features(x, sample_rate=sample_rate) for x in tqdm(X)]
+            )
+            print("X_handfeats shape:", X_handfeats.shape)
+
+            print("Train-test RF...")
+            evaluate_feats(
+                X_handfeats, Y, cfg, logger, groups=P, task_type=task_type
+            )
+
+        if cfg.evaluation.feat_random_cnn:
+            print(
+                """\n
+            ##############################################
+                        Random CNN features+RF
+            ##############################################
+            """
+            )
+            # Extract CNN features
+            print("Extracting features...")
+            if cfg.evaluation.network == "vgg":
+                model = cnn1()
+            else:
+                # get cnn
+                model = Resnet(output_size=cfg.data.output_size, cfg=cfg)
+            model.to(my_device, dtype=torch.float)
+            input_size = cfg.evaluation.input_size
+
+            X_deepfeats = forward_by_batches(model, X, input_size, my_device)
+            print("X_deepfeats shape:", X_deepfeats.shape)
+
+            print("Train-test RF...")
+            evaluate_feats(X_deepfeats, Y, cfg, logger, groups=P)
+
+        if cfg.evaluation.flip_net:
+            print(
+                """\n
+            ##############################################
+                        Flip_net+RF
+            ##############################################
+            """
+            )
+            # Extract CNN features
+            print("Extracting features...")
+            cnn = cnn1()
+            cnn.to(my_device, dtype=torch.float)
+            load_weights(cfg.evaluation.flip_net_path, cnn, my_device)
+            input_size = cfg.evaluation.input_size
+
+            X_deepfeats = forward_by_batches(cnn, X, input_size, my_device)
+            print("X_deepfeats shape:", X_deepfeats.shape)
+
+            print("Train-test RF...")
+            evaluate_feats(X_deepfeats, Y, cfg, logger, groups=P)
+
         """
-        )
-
-        # Extract hand-crafted features
-        print("Extracting features...")
-        X_handfeats = pd.DataFrame(
-            [handcraft_features(x, sample_rate=sample_rate) for x in tqdm(X)]
-        )
-        print("X_handfeats shape:", X_handfeats.shape)
-
-        print("Train-test RF...")
-        evaluate_feats(
-            X_handfeats, Y, cfg, logger, groups=P, task_type=task_type
-        )
-
-    if cfg.evaluation.feat_random_cnn:
-        print(
-            """\n
-        ##############################################
-                    Random CNN features+RF
-        ##############################################
+        Start of MLP classifier evaluation
         """
-        )
-        # Extract CNN features
-        print("Extracting features...")
-        if cfg.evaluation.network == "vgg":
-            model = cnn1()
+
+        if cfg.evaluation.flip_net_ft:
+            print(
+                """\n
+            ##############################################
+                        Flip_net+MLP
+            ##############################################
+            """
+            )
+            X_downsampled = downsample_data(X, cfg.evaluation.input_size)
+
+            print("Train-test Flip_net+MLP...")
+            evaluate_mlp(X_downsampled, Y, cfg, my_device, logger,log_dir_r, groups=P)
+        if cfg.evaluation.harnet_ft:
+            print(
+                """\n
+            ##############################################
+                        HARNET pretrained
+            ##############################################
+            """
+            )
+            X_downsampled = downsample_data(X, cfg.evaluation.input_size)
+
+            print("Evaluate HARNET...")
+            evaluate_harnet_classification(X_downsampled, Y, cfg, my_device, logger, log_dir_r, groups=P)
+    else:
+        if cfg.cross_dataset:
+            print(
+                """\n
+            ##############################################
+                        Cross-dataset evaluation
+            ##############################################
+            """
+            )
+            
+            # Load evaluation dataset
+            X_eval = np.load(cfg.evaluation_data.X_path)
+            Y_eval = np.load(cfg.evaluation_data.Y_path)
+            P_eval = np.load(cfg.evaluation_data.PID_path)  # participant IDs
+            X_downsampled = downsample_data(X, cfg.evaluation.input_size)
+            X_eval_downsampled = downsample_data(X_eval, cfg.evaluation.input_size)
+            test_data = (X_eval_downsampled, Y_eval, P_eval)
+            train_data = (X_downsampled, Y, P)
+            cross_dataset_evaluation(train_data, test_data, cfg, my_device, log_dir_r)
+            
         else:
-            # get cnn
-            model = Resnet(output_size=cfg.data.output_size, cfg=cfg)
-        model.to(my_device, dtype=torch.float)
-        input_size = cfg.evaluation.input_size
-
-        X_deepfeats = forward_by_batches(model, X, input_size, my_device)
-        print("X_deepfeats shape:", X_deepfeats.shape)
-
-        print("Train-test RF...")
-        evaluate_feats(X_deepfeats, Y, cfg, logger, groups=P)
-
-    if cfg.evaluation.flip_net:
-        print(
-            """\n
-        ##############################################
-                    Flip_net+RF
-        ##############################################
-        """
-        )
-        # Extract CNN features
-        print("Extracting features...")
-        cnn = cnn1()
-        cnn.to(my_device, dtype=torch.float)
-        load_weights(cfg.evaluation.flip_net_path, cnn, my_device)
-        input_size = cfg.evaluation.input_size
-
-        X_deepfeats = forward_by_batches(cnn, X, input_size, my_device)
-        print("X_deepfeats shape:", X_deepfeats.shape)
-
-        print("Train-test RF...")
-        evaluate_feats(X_deepfeats, Y, cfg, logger, groups=P)
-
-    """
-    Start of MLP classifier evaluation
-    """
-
-    if cfg.evaluation.flip_net_ft:
-        print(
-            """\n
-        ##############################################
-                    Flip_net+MLP
-        ##############################################
-        """
-        )
-        # Original X shape: (1861541, 1000, 3) for capture24
-        print("Original X shape:", X.shape)
-
-        input_size = cfg.evaluation.input_size
-        if X.shape[1] == input_size:
-            print("No need to downsample")
-            X_downsampled = X
-        else:
-            X_downsampled = resize(X, input_size)
-        X_downsampled = X_downsampled.astype(
-            "f4"
-        )  # PyTorch defaults to float32
-        # channels first: (N,M,3) -> (N,3,M). PyTorch uses channel first format
-        X_downsampled = np.transpose(X_downsampled, (0, 2, 1))
-        print("X transformed shape:", X_downsampled.shape)
-
-        print("Train-test Flip_net+MLP...")
-        evaluate_mlp(X_downsampled, Y, cfg, my_device, logger,log_dir_r, groups=P)
-    if cfg.evaluation.harnet_ft:
-        print(
-            """\n
-        ##############################################
-                    HARNET pretrained
-        ##############################################
-        """
-        )
-        # Original X shape: (1861541, 1000, 3) for capture24
-        print("Original X shape:", X.shape)
-
-        input_size = cfg.evaluation.input_size
-        if X.shape[1] == input_size:
-            print("No need to downsample")
-            X_downsampled = X
-        else:
-            X_downsampled = resize(X, input_size)
-        X_downsampled = X_downsampled.astype(
-            "f4"
-        )  # PyTorch defaults to float32
-        # channels first: (N,M,3) -> (N,3,M). PyTorch uses channel first format
-        X_downsampled = np.transpose(X_downsampled, (0, 2, 1))
-        print("X transformed shape:", X_downsampled.shape)
-
-        print("Evaluate HARNET...")
-        evaluate_harnet_classification(X_downsampled, Y, cfg, my_device, logger, log_dir_r, groups=P)
-
+            print(
+                    """\n
+                ##############################################
+                            Load a pretrained model
+                ##############################################
+                """
+                )
+            # Load evaluation dataset
+            X_eval = np.load(cfg.evaluation_data.X_path)
+            Y_eval = np.load(cfg.evaluation_data.Y_path)
+            P_eval = np.load(cfg.evaluation_data.PID_path)  # participant IDs
+            X_eval_downsampled = downsample_data(X_eval, cfg.evaluation.input_size)
+            print("labels:", np.unique(Y_eval))
+            test_data = (X_eval_downsampled, Y_eval, P_eval)
+            evaluate_pretrained_model(test_data, cfg, my_device, log_dir_r)
+           
 if __name__ == "__main__":
     main()
