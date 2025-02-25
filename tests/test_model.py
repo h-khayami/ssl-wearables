@@ -27,13 +27,15 @@ x = torch.FloatTensor(x)
 print(harnet30(x))
 
 
-# import os
-# import pandas as pd
-# save_path = os.path.expanduser('~/ssl-wearables/data/reports/2025-02-12_18-13/p1.csv')  # Expand ~
-# parent_dir = os.path.dirname('~/ssl-wearables/data/reports/2025-02-12_18-13/p1.csv')  # Extract parent directory
+# read npy data
 
-# if not os.path.exists(parent_dir):
-#     print(f"Creating missing directory: {parent_dir}")
-#     os.makedirs(parent_dir, exist_ok=True)
-# df = pd.DataFrame({'a': [1, 2, 3], 'b': [4, 5, 6]})
-# df.to_csv(save_path, index=False)
+Y = np.load('/data/ssl_wearable/data/downstream/realworld_30hz_clean/Y.npy')
+# find the unique labels
+unique_labels = np.unique(Y)
+# count the number of unique labels per class sample
+pivot = np.zeros(len(unique_labels))
+for i, label in enumerate(unique_labels):
+    pivot[i] = np.sum(Y == label)
+# print the unique labels and their counts
+print(unique_labels)
+print(pivot)
