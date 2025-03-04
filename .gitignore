@@ -76,3 +76,4 @@ tmp
 
 # env file
 .env
+data_parsing/multi_labels_report.xlsx
