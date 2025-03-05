@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - data: wisdm_10s_few_class
+  - data: ExtSens_10s
   - evaluation: all
   - model: resnet
   - dataloader: ten_sec

@@ -29,7 +29,8 @@ print(harnet30(x))
 
 # read npy data
 
-Y = np.load('/data/ssl_wearable/data/downstream/realworld_30hz_clean/Y.npy')
+Y = np.load('/data/ssl_wearable/data/downstream/ExtraSensory_30Hz_10s/Y.npy', allow_pickle=True)
+print(Y.shape)
 # find the unique labels
 unique_labels = np.unique(Y)
 # count the number of unique labels per class sample

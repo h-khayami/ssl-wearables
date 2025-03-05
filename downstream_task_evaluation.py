@@ -923,7 +923,7 @@ def downsample_data(X, input_size):
     print("X transformed shape:", X_downsampled.shape)
     return X_downsampled
 
-@hydra.main(config_path="conf", config_name="config_eva_cross_data")
+@hydra.main(config_path="conf", config_name="config_eva")
 def main(cfg):
     """Evaluate hand-crafted vs deep-learned features"""
 
@@ -959,8 +959,8 @@ def main(cfg):
 
     # Load dataset
     X = np.load(cfg.data.X_path)
-    Y = np.load(cfg.data.Y_path)
-    P = np.load(cfg.data.PID_path)  # participant IDs
+    Y = np.load(cfg.data.Y_path, allow_pickle=True)
+    P = np.load(cfg.data.PID_path, allow_pickle=True)  # participant IDs
 
     sample_rate = cfg.data.sample_rate
     task_type = cfg.data.task_type
