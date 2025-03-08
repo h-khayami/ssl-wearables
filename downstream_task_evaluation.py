@@ -29,10 +29,15 @@ from sslearning.pytorchtools import EarlyStopping
 from sslearning.data.datautils import RandomSwitchAxis, RotationAxis
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import logging
 from datetime import datetime
 import collections
 from hydra.utils import get_original_cwd
+
+from dotenv import load_dotenv
+from discord_webhook import DiscordWebhook
+
 
 """
 python downstream_task_evaluation.py -m data=rowlands_10s,oppo_10s
@@ -40,6 +45,21 @@ report_root='/home/cxx579/ssw/reports/mtl/aot'
 is_dist=false gpu=0 model=resnet evaluation=mtl_1k_ft evaluation.task_name=aot
 """
 
+
+def send_discord_message(message):
+    # Load variables from .env file
+    load_dotenv()
+    # Retrieve the webhook URL
+    webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
+    if webhook_url:
+        try:
+            webhook = DiscordWebhook(url=webhook_url, content=message)
+            webhook.execute()
+        except Exception as e:
+            print(f"🚨 Failed to send discord message: {e}")
+    else:
+        print("🚨 Webhook URL not found! Make sure .env is set up correctly.")
+    
 
 def train_val_split(X, Y, group, val_size=0.125):
     num_split = 1
@@ -271,6 +291,7 @@ def mlp_predict(model, data_loader, my_device, cfg):
     predictions_list = []
     true_list = []
     pid_list = []
+    probs_list = []  # Added list for probabilities
     model.eval()
     for i, (my_X, my_Y, my_PID) in enumerate(data_loader):
         with torch.no_grad():
@@ -279,20 +300,27 @@ def mlp_predict(model, data_loader, my_device, cfg):
             if cfg.data.task_type == "regress":
                 true_y = my_Y.to(my_device, dtype=torch.float)
                 pred_y = model(my_X)
+                probs = None  # No probabilities for regression
             else:
                 true_y = my_Y.to(my_device, dtype=torch.long)
                 logits = model(my_X)
-                pred_y = torch.argmax(logits, dim=1)
+                probs = F.softmax(logits, dim=1)  # Compute class probabilities
+                pred_y = torch.argmax(probs, dim=1)  # Get predicted class
+                # pred_y = torch.argmax(logits, dim=1)
 
             true_list.append(true_y.cpu())
             predictions_list.append(pred_y.cpu())
             pid_list.extend(my_PID)
+            probs_list.append(probs.cpu())  # Store probabilities
+    # Convert lists to tensors
     true_list = torch.cat(true_list)
     predictions_list = torch.cat(predictions_list)
+    probs_list = torch.cat(probs_list)  # Concatenate probability tensors
     return (
         torch.flatten(true_list).numpy(),
         torch.flatten(predictions_list).numpy(),
         np.array(pid_list),
+        probs_list.numpy(),  # Return probabilities as NumPy array
     )
 
 
@@ -361,33 +389,38 @@ def train_test_mlp(
     train_loader, val_loader, test_loader, weights = setup_data(
         train_idxs, test_idxs, X_feats, y, groups, cfg
     )
+    send_discord_message(f"Training MLP on {len(train_idxs)} samples")
     train_mlp(model, train_loader, val_loader, cfg, my_device, weights)
+    send_discord_message(f"Training complete. Evaluating on {len(test_idxs)} samples")
 
     model = init_model(cfg, my_device)
 
     model.load_state_dict(torch.load(cfg.model_path))
-
-    y_test, y_test_pred, pid_test = mlp_predict(
+    send_discord_message(f"Model loaded from {cfg.model_path}")
+    send_discord_message(f"Model evaluation started")
+    y_test, y_test_pred, pid_test, probs = mlp_predict(
         model, test_loader, my_device, cfg
     )
-
+    send_discord_message(f"Model evaluation complete")
+    results = classification_scores(y_test, y_test_pred, pid_test, probs, save=True, save_path=log_dir)
+    send_discord_message(f"Classification scores saved to {log_dir}")
     # save this for every single subject
-    my_pids = np.unique(pid_test)
-    results = []
-    for current_pid in my_pids:
-        subject_filter = current_pid == pid_test
-        subject_true = y_test[subject_filter]
-        subject_pred = y_test_pred[subject_filter]
+    # my_pids = np.unique(pid_test)
+    # results = []
+    # for current_pid in my_pids:
+    #     subject_filter = current_pid == pid_test
+    #     subject_true = y_test[subject_filter]
+    #     subject_pred = y_test_pred[subject_filter]
         
-        # log_dir = log_dir + f"{str(current_pid)}.csv"
-        # Make sure the parent directory exists, not the file itself
-        pathlib.Path(os.path.dirname(log_dir)).mkdir(parents=True, exist_ok=True)
-        print(f"Final log_dir: {log_dir}")
-        print(f"Directory exists? {os.path.isdir(os.path.dirname(log_dir))}")
-        print(f"File exists? {os.path.isfile(f'{log_dir}{str(current_pid)}.csv')}")
-        # result = classification_scores(subject_true, subject_pred, save=True, save_path=os.path.join(cfg.report_root, f"{str(current_pid)}.csv"))
-        result = classification_scores(subject_true, subject_pred, save=True, save_path=os.path.join(log_dir, f"{str(current_pid)}.csv"))
-        results.append(result)
+    #     # log_dir = log_dir + f"{str(current_pid)}.csv"
+    #     # Make sure the parent directory exists, not the file itself
+    #     pathlib.Path(os.path.dirname(log_dir)).mkdir(parents=True, exist_ok=True)
+    #     print(f"Final log_dir: {log_dir}")
+    #     print(f"Directory exists? {os.path.isdir(os.path.dirname(log_dir))}")
+    #     print(f"File exists? {os.path.isfile(f'{log_dir}{str(current_pid)}.csv')}")
+    #     # result = classification_scores(subject_true, subject_pred, save=True, save_path=os.path.join(cfg.report_root, f"{str(current_pid)}.csv"))
+    #     result = classification_scores(subject_true, subject_pred, save=True, save_path=os.path.join(log_dir, f"{str(current_pid)}.csv"))
+    #     results.append(result)
     return results
 
 
@@ -407,6 +440,7 @@ def evaluate_mlp(X_feats, y, cfg, my_device, logger, log_dir, groups=None):
     # Create a mapping and ensure keys and values are standard Python types
     label_mapping = {str(k): int(v) for k, v in zip(le.classes_, le.transform(le.classes_))}
     print(label_mapping)  # {'Cycling': 0, 'Running': 1, 'Walking': 2}
+    send_discord_message(f"Label mapping: {label_mapping}")
     with open(os.path.join(log_dir, "label_mapping.json"), "w") as f:
         json.dump(label_mapping, f)
 
@@ -414,21 +448,28 @@ def evaluate_mlp(X_feats, y, cfg, my_device, logger, log_dir, groups=None):
         X_feats = X_feats.to_numpy()
 
     folds = get_train_test_split(cfg, X_feats, y, groups)
-
+    
     results = []
-    for train_idxs, test_idxs in folds:
-        result = train_test_mlp(
-            train_idxs,
-            test_idxs,
-            X_feats,
-            y,
-            groups,
-            cfg,
-            my_device,
-            log_dir,
-            labels=labels,
-            encoder=le,
-        )
+    for fold_num, (train_idxs, test_idxs) in enumerate(folds, 1):
+        print(f"Processing fold {fold_num}/{cfg.num_split}")
+        send_discord_message(f"Processing fold {fold_num}/{cfg.num_split}")
+        try:
+            result = train_test_mlp(
+                train_idxs,
+                test_idxs,
+                X_feats,
+                y,
+                groups,
+                cfg,
+                my_device,
+                os.path.join(log_dir, f"Fold{str(fold_num)}.csv"),
+                labels=labels,
+                encoder=le,
+            )
+        except Exception as e:
+            error_message = f"🚨 Error in training: {str(e)}"
+            send_discord_message(error_message)
+        
         results.extend(result)
 
     pathlib.Path(log_dir).mkdir(parents=True, exist_ok=True)
@@ -476,7 +517,7 @@ def train_test_rf(
         log_dir = log_dir + str(current_pid)+".csv"
         # Make sure the parent directory exists, not the file itself
         pathlib.Path(os.path.dirname(log_dir)).mkdir(parents=True, exist_ok=True)
-        result = classification_scores(subject_true, subject_pred, save = True, save_path=log_dir)
+        result = classification_scores(subject_true, subject_pred,current_pid, None, save = True, save_path=log_dir)
         results.append(result)
 
     return results
@@ -522,7 +563,7 @@ def evaluate_harnet(
     )
 
     # Predict on test data
-    y_test, y_test_pred, pid_test = mlp_predict(
+    y_test, y_test_pred, pid_test, probs = mlp_predict(
         model, test_loader, my_device, cfg
     )
     # Calculate results for each subject
@@ -535,7 +576,7 @@ def evaluate_harnet(
         log_dir = log_dir + str(current_pid)+".csv"
         # Make sure the parent directory exists, not the file itself
         pathlib.Path(os.path.dirname(log_dir)).mkdir(parents=True, exist_ok=True)
-        result = classification_scores(subject_true, subject_pred, save = True, save_path=log_dir)
+        result = classification_scores(subject_true, subject_pred, pid_test, probs, save=True, save_path=log_dir)
         results.append(result)
     
     return results
@@ -644,7 +685,7 @@ def evaluate_saved_model(test_loader, cfg, my_device, label_mapping, log_dir):
     model.load_state_dict(torch.load(cfg.model_path))
     model.eval()
 
-    y_test, y_test_pred, pid_test = mlp_predict(model, test_loader, my_device, cfg)
+    y_test, y_test_pred, pid_test, probs = mlp_predict(model, test_loader, my_device, cfg)
 
     my_pids = np.unique(pid_test)
     results = []
@@ -654,7 +695,7 @@ def evaluate_saved_model(test_loader, cfg, my_device, label_mapping, log_dir):
         subject_pred = y_test_pred[subject_filter]
         subject_log_dir = os.path.join(log_dir, f"{str(current_pid)}.csv")
         os.makedirs(os.path.dirname(subject_log_dir), exist_ok=True)
-        result = classification_scores(subject_true, subject_pred, save=True, save_path=subject_log_dir)
+        result = classification_scores(subject_true, subject_pred, pid_test, probs, save=True, save_path=subject_log_dir)
         results.append(result)
        
     return results
@@ -947,6 +988,8 @@ def main(cfg):
     logger.addHandler(fh)
 
     logger.info(str(OmegaConf.to_yaml(cfg)))
+    send_discord_message("Downstream task started!")
+    
     # For reproducibility
     np.random.seed(42)
     torch.manual_seed(42)
@@ -989,14 +1032,13 @@ def main(cfg):
     if cfg.use_pretrained == False:
 
         if cfg.evaluation.feat_hand_crafted:
-            print(
-                """\n
+            task_message ="""\n
             ##############################################
                         Hand-crafted features+RF
             ##############################################
             """
-            )
-
+            print(task_message)
+            send_discord_message(task_message)
             # Extract hand-crafted features
             print("Extracting features...")
             X_handfeats = pd.DataFrame(
@@ -1010,13 +1052,13 @@ def main(cfg):
             )
 
         if cfg.evaluation.feat_random_cnn:
-            print(
-                """\n
+            task_message = """\n
             ##############################################
                         Random CNN features+RF
             ##############################################
             """
-            )
+            print(task_message)
+            send_discord_message(task_message)
             # Extract CNN features
             print("Extracting features...")
             if cfg.evaluation.network == "vgg":
@@ -1034,13 +1076,13 @@ def main(cfg):
             evaluate_feats(X_deepfeats, Y, cfg, logger, groups=P)
 
         if cfg.evaluation.flip_net:
-            print(
-                """\n
+            task_message ="""\n
             ##############################################
                         Flip_net+RF
             ##############################################
             """
-            )
+            print(task_message)
+            send_discord_message(task_message)
             # Extract CNN features
             print("Extracting features...")
             cnn = cnn1()
@@ -1059,38 +1101,38 @@ def main(cfg):
         """
 
         if cfg.evaluation.flip_net_ft:
-            print(
-                """\n
+            task_message = """\n
             ##############################################
                         Flip_net+MLP
             ##############################################
             """
-            )
+            print(task_message)
+            send_discord_message(task_message)
             X_downsampled = downsample_data(X, cfg.evaluation.input_size)
 
             print("Train-test Flip_net+MLP...")
             evaluate_mlp(X_downsampled, Y, cfg, my_device, logger,log_dir_r, groups=P)
         if cfg.evaluation.harnet_ft:
-            print(
-                """\n
+            task_message = """\n
             ##############################################
                         HARNET pretrained
             ##############################################
             """
-            )
+            print(task_message)
+            send_discord_message(task_message)
             X_downsampled = downsample_data(X, cfg.evaluation.input_size)
 
             print("Evaluate HARNET...")
             evaluate_harnet_classification(X_downsampled, Y, cfg, my_device, logger, log_dir_r, groups=P)
     else:
         if cfg.cross_dataset:
-            print(
-                """\n
+            task_message ="""\n
             ##############################################
                         Cross-dataset evaluation
             ##############################################
             """
-            )
+            print(task_message)
+            send_discord_message(task_message)
             
             # Load evaluation dataset
             X_eval = np.load(cfg.evaluation_data.X_path)
@@ -1103,13 +1145,13 @@ def main(cfg):
             cross_dataset_evaluation(train_data, test_data, cfg, my_device, log_dir_r)
             
         else:
-            print(
-                    """\n
+            task_message = """\n
                 ##############################################
                             Load a pretrained model
                 ##############################################
                 """
-                )
+            print(task_message)
+            send_discord_message(task_message)
             # Load evaluation dataset
             X_eval = np.load(cfg.evaluation_data.X_path)
             Y_eval = np.load(cfg.evaluation_data.Y_path)

@@ -3,6 +3,7 @@ import sklearn.metrics as metrics
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from sklearn.metrics import roc_auc_score
 import os
 
 
@@ -27,10 +28,19 @@ def summarise_epoch_scores(scores):
     return avg_epoch_class_score
 
 
-def classification_scores(Y_test, Y_test_pred, save=False, save_path=None):
+def classification_scores(Y_test, Y_test_pred, pid, probs, save=False, save_path=None):
     if save and save_path is not None:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        df = pd.DataFrame({"Y_test": Y_test, "Y_test_pred": Y_test_pred})
+        # Convert probs (2D array) to a DataFrame with separate columns for each class
+        probs_df = pd.DataFrame(probs, columns=[f"Class_{i}" for i in range(probs.shape[1])])
+
+        # Combine with the other data
+        df = pd.DataFrame({
+            "Y_test": Y_test, 
+            "Y_test_pred": Y_test_pred, 
+            "P_id": pid
+        })
+        df = pd.concat([df, probs_df], axis=1)  # Concatenate probabilities as additional columns
         print(f"Attempting to save CSV at: {save_path}")
         df.to_csv(save_path, index=False)
     cohen_kappa = metrics.cohen_kappa_score(Y_test, Y_test_pred)
@@ -47,13 +57,14 @@ def classification_scores(Y_test, Y_test_pred, save=False, save_path=None):
         Y_test, Y_test_pred, average='weighted', zero_division=0
     )
     confusion_matrix = metrics.confusion_matrix(Y_test, Y_test_pred)
-    
+    auc = roc_auc_score(Y_test, probs, multi_class='ovr')
+    print(f"AUC (One-vs-Rest): {auc:.3f}")
 
-    return cohen_kappa, precision, recall, f1, f1_weighted, confusion_matrix
+    return cohen_kappa, precision, recall, f1, f1_weighted, confusion_matrix, auc
 
 
 def save_report(
-    precision_list, recall_list, f1_list, cohen_kappa_list,  f1_weighted_list, confusion_matrix_list, report_path
+    precision_list, recall_list, f1_list, cohen_kappa_list,  f1_weighted_list, confusion_matrix_list, auc, report_path
 ):
     data = {
         "precision": precision_list,
@@ -61,6 +72,7 @@ def save_report(
         "f1": f1_list,
         "kappa": cohen_kappa_list,
         "f1_weighted": f1_weighted_list,
+        "AUC": auc,
         "confusion_matrix": confusion_matrix_list,
     }
 
@@ -77,9 +89,10 @@ def classification_report(results, report_path):
     f1_list = [result[3] for result in results]
     f1_weighted_list = [result[4] for result in results]
     confusion_matrix_list = [result[5] for result in results]
+    auc = [result[6] for result in results]
 
     save_report(
-        precision_list, recall_list, f1_list, cohen_kappa_list, f1_weighted_list, confusion_matrix_list, report_path
+        precision_list, recall_list, f1_list, cohen_kappa_list, f1_weighted_list, confusion_matrix_list, auc, report_path
     )
 
 
