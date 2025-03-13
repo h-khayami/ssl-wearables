@@ -1,0 +1,11 @@
+# label_mapping = {
+#     "sedentary_lying": ["LYING_DOWN", "SLEEPING"],
+#     "sedentary_sitting_other": ["SITTING", "COMPUTER_WORK", "READING_A_BOOK"],
+#     "sedentary_sitting_transport": ['DRIVE_-_I_M_THE_DRIVER', 'DRIVE_-_I_M_A_PASSENGER', 'IN_A_CAR', 'ON_A_BUS'],
+#     "upright_standing": ["STANDING_IN_PLACE", "WASHING_DISHES", "COOKING", "OR_standing"],
+#     # "upright_stepping": ["STANDING_AND_MOVING", "WALKING", "SHOPPING", "OUTSIDE", "RUNNING", "STAIRS_-_GOING_UP", "STAIRS_-_GOING_DOWN"],
+#     "upright_stepping_low": ["STANDING_AND_MOVING", "SHOPPING", "STROLLING"],
+#     "upright_stepping_moderate": ["FIX_walking", "OUTSIDE"],
+#     "upright_stepping_vigorous": ["FIX_running"],
+#     "cycling": ["BICYCLING"]
+# }

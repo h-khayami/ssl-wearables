@@ -1,22 +1,27 @@
 defaults:
   - _self_
-  - data: wisdm_10s_few_class
+  - data: wisdm_10s_few_class #ExtSens_10s
   - evaluation: all
   - model: resnet
   - dataloader: ten_sec
-  - evaluation_data: mymove_10s
-  - cross_dataset_mapping: mymove_wisdm
+  - evaluation_data: ExtSens_10s
+  - cross_dataset_mapping: mymove5c_wisdm4c
 
-cross_dataset: false
-use_pretrained: true
+cross_dataset: false #set it true when you want to start training on one dataset and evaluate on another dataset
+use_pretrained: true #set it to true when you want to use a pretrained model (either on the same dataset or another dataset)
 gpu: -1
 gpu_ids: [0, 1, 2]  # gpus to use if multi_gpu==true
 multi_gpu: true
 num_split: 5
 augmentation: true
-model_path: /home/hossein/ssl-wearables/2025-02-18_19:32:24tmp.pt
+
 logging_path: /data/UKBB/SSL/evaluations
 report_root: "~/ssl-wearables/data/reports/"
+mapping_path: "conf/cross_dataset_mapping/Activity_label_mapping.json"
+# trained_label_mapping_path: "${report_root}2025-03-08_05-22/label_mapping.json" #ExtraSensory
+trained_label_mapping_path: "${report_root}2025-02-18_19-32/label_mapping.json" #WISDM
+# model_path: /home/hossein/ssl-wearables/2025-03-08_05:22:16tmp.pt # trained on Extra Sensory
+model_path: /home/hossein/ssl-wearables/2025-02-18_19:32:24tmp.pt # trained on WISDM (4 classes)
 # report_path: "${report_root}${data.dataset_name}_${evaluation.evaluation_name}_${data.subject_count}.csv"
 report_path: "${report_root}${data.dataset_name}_${evaluation.evaluation_name}_${data.subject_count}_${evaluation.subR}.csv"
 is_verbose: false

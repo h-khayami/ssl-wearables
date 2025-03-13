@@ -37,7 +37,7 @@ from hydra.utils import get_original_cwd
 
 from dotenv import load_dotenv
 from discord_webhook import DiscordWebhook
-
+from data_parsing.Dataset_Label_Mapper import DatasetLabelMapper
 
 """
 python downstream_task_evaluation.py -m data=rowlands_10s,oppo_10s
@@ -403,7 +403,7 @@ def train_test_mlp(
     )
     send_discord_message(f"Model evaluation complete")
     results = classification_scores(y_test, y_test_pred, pid_test, probs, save=True, save_path=log_dir)
-    send_discord_message(f"Classification scores saved to {log_dir}")
+    send_discord_message(f"Predictions on test set saved to {log_dir}")
     # save this for every single subject
     # my_pids = np.unique(pid_test)
     # results = []
@@ -470,8 +470,9 @@ def evaluate_mlp(X_feats, y, cfg, my_device, logger, log_dir, groups=None):
             error_message = f"🚨 Error in training: {str(e)}"
             send_discord_message(error_message)
         
-        results.extend(result)
-
+        results.append(result)
+    print(results)
+    # Create report directory and generate classification report
     pathlib.Path(log_dir).mkdir(parents=True, exist_ok=True)
     report_filename = os.path.basename(cfg.report_path)
     log_path = os.path.join(log_dir, report_filename)
@@ -680,7 +681,7 @@ def train_and_save_model(train_loader, val_loader, cfg, my_device, weights):
     train_mlp(model, train_loader, val_loader, cfg, my_device, weights)
     # torch.save(model.state_dict(), model_path)
     # return model_path
-def evaluate_saved_model(test_loader, cfg, my_device, label_mapping, log_dir):
+def evaluate_saved_model(test_loader, cfg, my_device, log_dir):
     model = init_model(cfg, my_device)
     model.load_state_dict(torch.load(cfg.model_path))
     model.eval()
@@ -693,9 +694,10 @@ def evaluate_saved_model(test_loader, cfg, my_device, label_mapping, log_dir):
         subject_filter = current_pid == pid_test
         subject_true = y_test[subject_filter]
         subject_pred = y_test_pred[subject_filter]
+        subject_probs = probs[subject_filter]  # Filter probabilities for the current subject
         subject_log_dir = os.path.join(log_dir, f"{str(current_pid)}.csv")
         os.makedirs(os.path.dirname(subject_log_dir), exist_ok=True)
-        result = classification_scores(subject_true, subject_pred, pid_test, probs, save=True, save_path=subject_log_dir)
+        result = classification_scores(subject_true, subject_pred, [current_pid] * len(subject_true), subject_probs, save=True, save_path=subject_log_dir)
         results.append(result)
        
     return results
@@ -739,28 +741,74 @@ def cross_dataset_evaluation(train_data, test_data, cfg, my_device, log_dir):
 
     # Evaluate the saved model on dataset2
     results = evaluate_saved_model(test_loader, cfg, my_device, label_mapping, log_dir)
-    return results
-
+    print(results)
+    # Create report directory and generate classification report
+    pathlib.Path(log_dir).mkdir(parents=True, exist_ok=True)
+    report_filename = os.path.basename(cfg.report_path)
+    log_path = os.path.join(log_dir, report_filename)
+    classification_report(results, log_path)
+def map_labels(Y_test,cfg, log_dir, reference_method):
+    if reference_method:
+        dataset1 = cfg.data.dataset_name
+        dataset2 = cfg.evaluation_data.dataset_name
+        mapping_path = os.path.join(get_original_cwd(), cfg.mapping_path)
+        mapper = DatasetLabelMapper(mapping_path)
+        Y_test = mapper.map_labels_to_numeric(Y_test, dataset2)
+        label_mapping = mapper.get_label_mapping(dataset2)
+        print(f"Final label mapping: {label_mapping}")  # {'Cycling': 0, 'Running': 1, 'Walking': 2}
+        with open(os.path.join(log_dir, "eval_label_mapping.json"), "w") as f:
+            json.dump(label_mapping, f)
+    else:
+        if hasattr(cfg, 'cross_dataset_mapping') and cfg.cross_dataset_mapping:
+            # Load mapping from yaml/dict config
+            cross_dataset_map = cfg.cross_dataset_mapping
+            print(f"Applying cross-dataset mapping: {cross_dataset_map}")
+            
+            # Create a new array with mapped labels
+            Y_test_mapped = np.array([cross_dataset_map.get(label, label) for label in Y_test])
+            print(f"Original labels: {np.unique(Y_test)}")
+            print(f"Mapped labels: {np.unique(Y_test_mapped)}")
+            
+            # Use the mapped labels for encoding
+            Y_test = Y_test_mapped
+        if hasattr(cfg, 'trained_label_mapping_path') and cfg.trained_label_mapping_path:
+            # expand ~ to the user's home directory
+            cfg.trained_label_mapping_path = os.path.expanduser(cfg.trained_label_mapping_path)
+            # Load label mapping from file
+            with open(cfg.trained_label_mapping_path, "r") as f:
+                label_mapping = json.load(f)
+                print(f"Loaded label mapping from {cfg.trained_label_mapping_path}")
+                # map Y_test labels to numeric labels using the loaded mapping
+                Y_test = np.array([label_mapping.get(label, label) for label in Y_test])
+        else:
+            le_test = preprocessing.LabelEncoder()
+            le_test.fit(Y_test)
+            Y_test = le_test.transform(Y_test)
+            # Create a mapping and ensure keys and values are standard Python types
+            label_mapping = {str(k): int(v) for k, v in zip(le_test.classes_, le_test.transform(le_test.classes_))}
+            print(f"Final label mapping: {label_mapping}")  # {'Cycling': 0, 'Running': 1, 'Walking': 2}
+            with open(os.path.join(log_dir, "eval_label_mapping.json"), "w") as f:
+                json.dump(label_mapping, f)
+    return Y_test
 def evaluate_pretrained_model(test_data, cfg, my_device, log_dir):
     X_test = test_data[0]
     Y_test = test_data[1]
     P_test = test_data[2]
+   
+    Y_test = map_labels(Y_test, cfg, log_dir, reference_method = False)
     
-    le_test = preprocessing.LabelEncoder()
-    le_test.fit(Y_test)
-    Y_test = le_test.transform(Y_test)
-
     _, _, test_loader, _ = setup_data(
         np.array([]), np.arange(len(X_test)), X_test, Y_test, P_test, cfg
     )
-    # Create a mapping and ensure keys and values are standard Python types
-    label_mapping = {str(k): int(v) for k, v in zip(le_test.classes_, le_test.transform(le_test.classes_))}
-    print(label_mapping)  # {'Cycling': 0, 'Running': 1, 'Walking': 2}
-    with open(os.path.join(log_dir, "eval_label_mapping.json"), "w") as f:
-        json.dump(label_mapping, f)
+    
     # Evaluate the saved model on dataset2
-    results = evaluate_saved_model(test_loader, cfg, my_device, label_mapping, log_dir)
-    return results
+    results = evaluate_saved_model(test_loader, cfg, my_device, log_dir)
+    print(results)
+    # Create report directory and generate classification report
+    pathlib.Path(log_dir).mkdir(parents=True, exist_ok=True)
+    report_filename = os.path.basename(cfg.report_path)
+    log_path = os.path.join(log_dir, report_filename)
+    classification_report(results, log_path)
 
 
     """Our baseline handcrafted features. xyz is a window of shape (N,3)"""
@@ -964,7 +1012,7 @@ def downsample_data(X, input_size):
     print("X transformed shape:", X_downsampled.shape)
     return X_downsampled
 
-@hydra.main(config_path="conf", config_name="config_eva")
+@hydra.main(config_path="conf", config_name="config_eva_cross_data")
 def main(cfg):
     """Evaluate hand-crafted vs deep-learned features"""
 
@@ -1154,8 +1202,8 @@ def main(cfg):
             send_discord_message(task_message)
             # Load evaluation dataset
             X_eval = np.load(cfg.evaluation_data.X_path)
-            Y_eval = np.load(cfg.evaluation_data.Y_path)
-            P_eval = np.load(cfg.evaluation_data.PID_path)  # participant IDs
+            Y_eval = np.load(cfg.evaluation_data.Y_path, allow_pickle=True)
+            P_eval = np.load(cfg.evaluation_data.PID_path, allow_pickle=True)  # participant IDs
             X_eval_downsampled = downsample_data(X_eval, cfg.evaluation.input_size)
             print("labels:", np.unique(Y_eval))
             test_data = (X_eval_downsampled, Y_eval, P_eval)

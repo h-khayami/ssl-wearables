@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score
+import numpy as np
 import os
 
 
@@ -27,40 +28,49 @@ def summarise_epoch_scores(scores):
 
     return avg_epoch_class_score
 
-
 def classification_scores(Y_test, Y_test_pred, pid, probs, save=False, save_path=None):
-    if save and save_path is not None:
+    """Computes classification metrics and optionally saves predictions and labels to CSV."""
+    
+    if save and save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        # Convert probs (2D array) to a DataFrame with separate columns for each class
+
+        # Create DataFrame with true labels, predictions, and probabilities
         probs_df = pd.DataFrame(probs, columns=[f"Class_{i}" for i in range(probs.shape[1])])
+        df = pd.DataFrame({"Y_test": Y_test, "Y_test_pred": Y_test_pred, "P_id": pid})
+        df = pd.concat([df, probs_df], axis=1)
 
-        # Combine with the other data
-        df = pd.DataFrame({
-            "Y_test": Y_test, 
-            "Y_test_pred": Y_test_pred, 
-            "P_id": pid
-        })
-        df = pd.concat([df, probs_df], axis=1)  # Concatenate probabilities as additional columns
-        print(f"Attempting to save CSV at: {save_path}")
+        print(f"Saving CSV to: {save_path}")
         df.to_csv(save_path, index=False)
-    cohen_kappa = metrics.cohen_kappa_score(Y_test, Y_test_pred)
-    precision = metrics.precision_score(
-        Y_test, Y_test_pred, average="macro", zero_division=0
-    )
-    recall = metrics.recall_score(
-        Y_test, Y_test_pred, average="macro", zero_division=0
-    )
-    f1 = metrics.f1_score(
-        Y_test, Y_test_pred, average="macro", zero_division=0
-    )
-    f1_weighted = metrics.f1_score(
-        Y_test, Y_test_pred, average='weighted', zero_division=0
-    )
-    confusion_matrix = metrics.confusion_matrix(Y_test, Y_test_pred)
-    auc = roc_auc_score(Y_test, probs, multi_class='ovr')
-    print(f"AUC (One-vs-Rest): {auc:.3f}")
-
-    return cohen_kappa, precision, recall, f1, f1_weighted, confusion_matrix, auc
+    num_classes = probs.shape[1]
+    unique_classes = np.unique(Y_test)
+    print(f"unique true labels: {unique_classes}")
+    print(f"unique pred labels: {np.unique(Y_test_pred)}")
+    print(f"probs shape: {probs.shape}")
+        # Ensure the number of columns in probs matches the number of unique classes in Y_test
+    
+    # # One-hot encode Y_test to match the shape of probs
+    # Y_test_one_hot = np.zeros((Y_test.shape[0], num_classes))
+    # Y_test_one_hot[np.arange(Y_test.shape[0]), Y_test] = 1
+    # Compute metrics
+    metrics_dict = {
+        "cohen_kappa": metrics.cohen_kappa_score(Y_test, Y_test_pred),
+        "precision": metrics.precision_score(Y_test, Y_test_pred, average="macro", zero_division=0),
+        "recall": metrics.recall_score(Y_test, Y_test_pred, average="macro", zero_division=0),
+        "f1": metrics.f1_score(Y_test, Y_test_pred, average="macro", zero_division=0),
+        "f1_weighted": metrics.f1_score(Y_test, Y_test_pred, average="weighted", zero_division=0),
+        "confusion_matrix": metrics.confusion_matrix(Y_test, Y_test_pred),
+        "auc": None
+        }
+    # if num_classes > len(unique_classes):
+    #     # filter out the columns that are not in the unique classes
+    #     probs_for_auc = probs[:, unique_classes]
+    #     print(f"probs for auc shape: {probs_for_auc.shape}")
+    #     metrics_dict["auc"] = roc_auc_score(Y_test, probs_for_auc, multi_class="ovr")
+    if num_classes == len(unique_classes):
+        metrics_dict["auc"] = roc_auc_score(Y_test, probs, multi_class="ovr")
+        print(f"AUC (One-vs-Rest): {metrics_dict['auc']:.3f}")
+    
+    return metrics_dict
 
 
 def save_report(
@@ -79,21 +89,14 @@ def save_report(
     df = pd.DataFrame(data)
     df.to_csv(report_path, index=False)
 
-
 def classification_report(results, report_path):
-    # logger is a tf logger
-    # Collate metrics
-    cohen_kappa_list = [result[0] for result in results]
-    precision_list = [result[1] for result in results]
-    recall_list = [result[2] for result in results]
-    f1_list = [result[3] for result in results]
-    f1_weighted_list = [result[4] for result in results]
-    confusion_matrix_list = [result[5] for result in results]
-    auc = [result[6] for result in results]
-
-    save_report(
-        precision_list, recall_list, f1_list, cohen_kappa_list, f1_weighted_list, confusion_matrix_list, auc, report_path
-    )
+    """Aggregates metrics from multiple folds and saves to a CSV."""
+    # Convert list of dictionaries into a DataFrame
+    results_df = pd.DataFrame(results)
+    # Save results to CSV
+    os.makedirs(os.path.dirname(report_path), exist_ok=True)
+    results_df.to_csv(report_path, index=False)
+    print(f"Classification report saved to: {report_path}")
 
 
 def regression_scores(Y_test, Y_test_pred):

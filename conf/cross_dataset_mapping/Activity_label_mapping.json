@@ -1,0 +1,75 @@
+{
+    "reference_activities": {
+        "Lying": 0,
+        "Sitting": 1,
+        "Transport": 2,
+        "Standing": 3,
+        "Stepping_Low": 4,
+        "Stepping_Moderate": 5,
+        "Stepping_Vigorous": 6,
+        "Cycling": 7
+    },
+    "dataset_mappings": {
+        "MyMove": {
+        "sedentary_lying": 0,
+        "sedentary_sitting_other": 1,
+        "sedentary_sitting_transport": 2,
+        "upright_standing": 3,
+        "upright_stepping_low": 4,
+        "upright_stepping_moderate": 5,
+        "upright_stepping_vigorous": 6,
+        "cycling": 7
+      },
+      "WISDM": {
+        "sitting": 1,
+        "standing": 3,
+        "walking": 5,
+        "jogging": 6
+      },
+      "ExtraSensory": {
+        "LYING_DOWN": 0,
+        "SLEEPING": 0,
+        "SITTING": 1,
+        "COMPUTER_WORK": 1,
+        "READING_A_BOOK": 1,
+        "DRIVE_-_I_M_THE_DRIVER": 2,
+        "DRIVE_-_I_M_A_PASSENGER": 2,
+        "IN_A_CAR": 2,
+        "ON_A_BUS": 2,
+        "STANDING_IN_PLACE": 3,
+        "WASHING_DISHES": 3,
+        "COOKING": 3,
+        "OR_standing": 3,
+        "STANDING_AND_MOVING": 4,
+        "SHOPPING": 4,
+        "STROLLING": 4,
+        "FIX_walking": 5,
+        "OUTSIDE": 5,
+        "FIX_running": 6,
+        "BICYCLING": 7
+      },
+      "PAMAP2": {
+        "Lying": 0,
+        "Sitting": 1,
+        "car driving": 2,
+        "Standing": 3,
+        "Walking": 5,
+        "Running": 6,
+        "Cycling": 7
+      },
+      "REALWORLD": {
+        "lying": 0,
+        "sitting": 1,
+        "standing": 3,
+        "walking": 5,
+        "running": 6
+      },
+      "CAPTURE24": {
+        "sleep": 0,
+        "sedentary": 1,
+        "light": 4,
+        "moderate-vigorous": 5
+      }
+    }
+  }
+  
