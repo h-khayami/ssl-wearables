@@ -63,11 +63,39 @@ def send_discord_message(message):
 
 def train_val_split(X, Y, group, val_size=0.125):
     num_split = 1
+    send_discord_message(f"n_samples: {len(X)}")
+    send_discord_message("Unique groups:", np.unique(group))
+    send_discord_message(f"n_groups: {len(np.unique(group))}")
     folds = GroupShuffleSplit(
         num_split, test_size=val_size, random_state=41
     ).split(X, Y, groups=group)
     train_idx, val_idx = next(folds)
     return X[train_idx], X[val_idx], Y[train_idx], Y[val_idx]
+
+def train_val_split_sequential(X_train, Y_train, val_ratio=0.125):
+    """Splits training data into train and validation sets, ensuring each class is split with the same ratio."""
+    unique_classes = np.unique(Y_train)
+    X_train_final, X_val = [], []
+    Y_train_final, Y_val = [], []
+
+    for cls in unique_classes:
+        # Get indices of the current class
+        cls_indices = np.where(Y_train == cls)[0]
+        split_idx = int(len(cls_indices) * (1 - val_ratio))  # Compute split index for the class
+
+        # Split the data for the current class
+        X_train_final.append(X_train[cls_indices[:split_idx]])
+        X_val.append(X_train[cls_indices[split_idx:]])
+        Y_train_final.append(Y_train[cls_indices[:split_idx]])
+        Y_val.append(Y_train[cls_indices[split_idx:]])
+
+    # Concatenate the splits for all classes
+    X_train_final = np.concatenate(X_train_final, axis=0)
+    X_val = np.concatenate(X_val, axis=0)
+    Y_train_final = np.concatenate(Y_train_final, axis=0)
+    Y_val = np.concatenate(Y_val, axis=0)
+
+    return X_train_final, X_val, Y_train_final, Y_val
 
 
 def set_bn_eval(m):
@@ -155,25 +183,26 @@ def setup_data(train_idxs, test_idxs, X_feats, Y, groups, cfg):
 
     # When changing the number of training data, we
     # will keep the test data fixed
-    if cfg.data.held_one_subject_out and tmp_X_train is not None:
-        folds = LeaveOneGroupOut().split(
-            tmp_X_train, tmp_Y_train, groups=group_train
-        )
-        folds = list(folds)
-        final_train_idxs, final_val_idxs = folds[0]
-        X_train, X_val = (
-            tmp_X_train[final_train_idxs],
-            tmp_X_train[final_val_idxs],
-        )
-        Y_train, Y_val = (
-            tmp_Y_train[final_train_idxs],
-            tmp_Y_train[final_val_idxs],
-        )
-    elif tmp_X_train is not None:
-        # We further divide up train into 70/10 train/val split
-        X_train, X_val, Y_train, Y_val = train_val_split(
-            tmp_X_train, tmp_Y_train, group_train
-        )
+    # Train-validation splitting
+    if tmp_X_train is not None:
+        if cfg.split_method == "held_one_subject_out":
+            folds = LeaveOneGroupOut().split(
+                tmp_X_train, tmp_Y_train, groups=group_train
+            )
+            folds = list(folds)
+            final_train_idxs, final_val_idxs = folds[0]
+            X_train, X_val = (
+                tmp_X_train[final_train_idxs],
+                tmp_X_train[final_val_idxs],
+            )
+            Y_train, Y_val = (
+                tmp_Y_train[final_train_idxs],
+                tmp_Y_train[final_val_idxs],
+            )
+        elif cfg.split_method == "sequential" or cfg.split_method == "k_shot":
+            X_train, X_val, Y_train, Y_val = train_val_split_sequential(tmp_X_train, tmp_Y_train)
+        elif cfg.split_method == "random_kfold":
+            X_train, X_val, Y_train, Y_val = train_val_split(tmp_X_train, tmp_Y_train, group_train)
     else:
         X_train, X_val, Y_train, Y_val = None, None, None, None
 
@@ -241,7 +270,7 @@ def train_mlp(model, train_loader, val_loader, cfg, my_device, weights):
         loss_fn = RMSELoss()
 
     early_stopping = EarlyStopping(
-        patience=cfg.evaluation.patience, path=cfg.model_path, verbose=True
+        patience=cfg.evaluation.patience, path=cfg.model_path, verbose=True, delta=0.00001
     )
     for epoch in range(cfg.evaluation.num_epoch):
         model.train()
@@ -360,15 +389,59 @@ def setup_model(cfg, my_device):
 
 def get_train_test_split(cfg, X_feats, y, groups):
     # support leave one subject out and split by proportion
-    if cfg.data.held_one_subject_out:
+    send_discord_message(f"Split method: {cfg.split_method}")
+    if cfg.split_method == "held_one_subject_out":
         folds = LeaveOneGroupOut().split(X_feats, y, groups=groups)
-    else:
+    elif cfg.split_method == "random_kfold":
         # Train-test multiple times with a 80/20 random split each
         folds = GroupShuffleSplit(
             cfg.num_split, test_size=0.2, random_state=42
         ).split(X_feats, y, groups=groups)
+    elif cfg.split_method == "sequential" or cfg.split_method == "k_shot":
+        folds = get_train_test_split_personalized(cfg, X_feats, y, groups)
+        send_discord_message(f"Personalized split: {len(folds)} participants")
+    else:
+        raise ValueError("Invalid split method")
     return folds
 
+
+def get_train_test_split_personalized(cfg, X_feats, y, groups):
+    folds = []
+    
+    unique_participants = np.unique(groups)
+    train_ratio = cfg.train_ratio  # Fraction for training in sequential split
+
+    for participant in unique_participants:
+        participant_indices = np.where(groups == participant)[0]
+        X_participant, y_participant = X_feats[participant_indices], y[participant_indices]
+
+        unique_activities = np.unique(y_participant)
+        train_indices, test_indices = [], []
+
+        if cfg.split_method == "sequential":
+            # Configurable sequential split per activity
+            for activity in unique_activities:
+                activity_indices = np.where(y_participant == activity)[0]
+                split_point = int(len(activity_indices) * train_ratio)
+                
+                train_indices.extend(participant_indices[activity_indices[:split_point]])
+                test_indices.extend(participant_indices[activity_indices[split_point:]])
+
+        elif cfg.split_method == "k_shot":
+            # K-shot learning: first K samples for training, rest for testing
+            K = cfg.k_shot  # Number of shots
+            for activity in unique_activities:
+                activity_indices = np.where(y_participant == activity)[0]
+                
+                if len(activity_indices) > K:
+                    train_indices.extend(participant_indices[activity_indices[:K]])
+                    test_indices.extend(participant_indices[activity_indices[K:]])
+                else:
+                    train_indices.extend(participant_indices[activity_indices])  # Use all if less than K
+         
+        folds.append((np.array(train_indices), np.array(test_indices)))
+    
+    return folds
 
 def train_test_mlp(
     train_idxs,
@@ -389,7 +462,9 @@ def train_test_mlp(
     train_loader, val_loader, test_loader, weights = setup_data(
         train_idxs, test_idxs, X_feats, y, groups, cfg
     )
-    send_discord_message(f"Training MLP on {len(train_idxs)} samples")
+    # send_discord_message(f"Training MLP on {len(train_idxs)} samples")
+    send_discord_message(f"training label distribution: {np.unique(y[train_idxs], return_counts=True)}")
+    # send_discord_message(f"labelb weights: {weights}")
     train_mlp(model, train_loader, val_loader, cfg, my_device, weights)
     send_discord_message(f"Training complete. Evaluating on {len(test_idxs)} samples")
 
@@ -448,11 +523,14 @@ def evaluate_mlp(X_feats, y, cfg, my_device, logger, log_dir, groups=None):
         X_feats = X_feats.to_numpy()
 
     folds = get_train_test_split(cfg, X_feats, y, groups)
-    
+    total_folds = len(folds)
     results = []
     for fold_num, (train_idxs, test_idxs) in enumerate(folds, 1):
-        print(f"Processing fold {fold_num}/{cfg.num_split}")
-        send_discord_message(f"Processing fold {fold_num}/{cfg.num_split}")
+        print(f"Processing fold {fold_num}/{total_folds}")
+        send_discord_message(f"Processing fold {fold_num}/{total_folds}")
+        print(f"Training on {len(train_idxs)} samples")
+        print(f"Evaluating on {len(test_idxs)} samples")
+        print(f"Unique labels in training set:{np.unique(y[train_idxs])}")
         try:
             result = train_test_mlp(
                 train_idxs,
@@ -747,7 +825,17 @@ def cross_dataset_evaluation(train_data, test_data, cfg, my_device, log_dir):
     report_filename = os.path.basename(cfg.report_path)
     log_path = os.path.join(log_dir, report_filename)
     classification_report(results, log_path)
-def map_labels(Y_test,cfg, log_dir, reference_method):
+def map_labels(Y_test,cfg, log_dir, reference_method, ignore_cross_dataset_mapping = False):
+    if ignore_cross_dataset_mapping:
+        le_test = preprocessing.LabelEncoder()
+        le_test.fit(Y_test)
+        Y_test = le_test.transform(Y_test)
+        # Create a mapping and ensure keys and values are standard Python types
+        label_mapping = {str(k): int(v) for k, v in zip(le_test.classes_, le_test.transform(le_test.classes_))}
+        print(f"Final label mapping: {label_mapping}")  # {'Cycling': 0, 'Running': 1, 'Walking': 2}
+        with open(os.path.join(log_dir, "eval_label_mapping.json"), "w") as f:
+            json.dump(label_mapping, f)
+        return Y_test
     if reference_method:
         dataset1 = cfg.data.dataset_name
         dataset2 = cfg.evaluation_data.dataset_name
@@ -795,7 +883,7 @@ def evaluate_pretrained_model(test_data, cfg, my_device, log_dir):
     Y_test = test_data[1]
     P_test = test_data[2]
    
-    Y_test = map_labels(Y_test, cfg, log_dir, reference_method = False)
+    Y_test = map_labels(Y_test, cfg, log_dir, reference_method = False, ignore_cross_dataset_mapping = True)
     
     _, _, test_loader, _ = setup_data(
         np.array([]), np.arange(len(X_test)), X_test, Y_test, P_test, cfg
@@ -1012,7 +1100,7 @@ def downsample_data(X, input_size):
     print("X transformed shape:", X_downsampled.shape)
     return X_downsampled
 
-@hydra.main(config_path="conf", config_name="config_eva_cross_data")
+@hydra.main(config_path="conf", config_name="config_eva_person")
 def main(cfg):
     """Evaluate hand-crafted vs deep-learned features"""
 
@@ -1204,6 +1292,11 @@ def main(cfg):
             X_eval = np.load(cfg.evaluation_data.X_path)
             Y_eval = np.load(cfg.evaluation_data.Y_path, allow_pickle=True)
             P_eval = np.load(cfg.evaluation_data.PID_path, allow_pickle=True)  # participant IDs
+            print("X_eval shape:", X_eval.shape)
+            print("Y_eval shape:", Y_eval.shape)
+            print("P_eval shape:", P_eval.shape)
+            print("\nLabel distribution:")
+            print(pd.Series(Y_eval).value_counts())
             X_eval_downsampled = downsample_data(X_eval, cfg.evaluation.input_size)
             print("labels:", np.unique(Y_eval))
             test_data = (X_eval_downsampled, Y_eval, P_eval)

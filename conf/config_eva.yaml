@@ -5,6 +5,7 @@ defaults:
   - model: resnet
   - dataloader: ten_sec
 
+split_method: "held_one_subject_out" # "k_shot" or "sequential" or "held_one_subject_out" or "random_kfold"
 use_pretrained: false
 gpu: -1
 gpu_ids: [0, 1, 2, 3]  # gpus to use if multi_gpu==true

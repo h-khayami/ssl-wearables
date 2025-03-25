@@ -1,0 +1,19 @@
+# training dataset is mymove_10s_5c
+# evaluation dataset is wisdm_10s_few_class
+# evaluation label: training label
+upright_stepping_vigorous : jogging
+sedentary_sitting_other : sitting
+upright_standing : standing
+upright_stepping_moderate: walking
+# walking: upright_stepping_low
+
+
+
+# sedentary_lying:
+# sedentary_sitting_other:
+# sedentary_sitting_transport:
+# upright_standing:
+# upright_stepping_low:
+# upright_stepping_moderate:
+# upright_stepping_vigorous:
+# cycling:
