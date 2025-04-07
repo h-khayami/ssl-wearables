@@ -64,7 +64,7 @@ def send_discord_message(message):
 def train_val_split(X, Y, group, val_size=0.125):
     num_split = 1
     send_discord_message(f"n_samples: {len(X)}")
-    send_discord_message("Unique groups:", np.unique(group))
+    send_discord_message(f"Unique groups:{np.unique(group)}")
     send_discord_message(f"n_groups: {len(np.unique(group))}")
     folds = GroupShuffleSplit(
         num_split, test_size=val_size, random_state=41
@@ -380,7 +380,7 @@ def setup_model(cfg, my_device):
     model = init_model(cfg, my_device)
 
     if cfg.evaluation.load_weights:
-        print("Loading weights from %s" % cfg.evaluation.flip_net_path)
+        print(f"Loading weights from {cfg.evaluation.flip_net_path}")
         load_weights(cfg.evaluation.flip_net_path, model, my_device)
     if cfg.evaluation.freeze_weight:
         freeze_weights(model)
@@ -523,7 +523,10 @@ def evaluate_mlp(X_feats, y, cfg, my_device, logger, log_dir, groups=None):
         X_feats = X_feats.to_numpy()
 
     folds = get_train_test_split(cfg, X_feats, y, groups)
-    total_folds = len(folds)
+    if cfg.split_method == "random_kfold" or cfg.split_method == "held_one_subject_out":
+        total_folds = cfg.num_split
+    else:
+        total_folds = len(folds)
     results = []
     for fold_num, (train_idxs, test_idxs) in enumerate(folds, 1):
         print(f"Processing fold {fold_num}/{total_folds}")
@@ -1100,7 +1103,7 @@ def downsample_data(X, input_size):
     print("X transformed shape:", X_downsampled.shape)
     return X_downsampled
 
-@hydra.main(config_path="conf", config_name="config_eva_person")
+@hydra.main(config_path="conf", config_name="config_eva")
 def main(cfg):
     """Evaluate hand-crafted vs deep-learned features"""
 

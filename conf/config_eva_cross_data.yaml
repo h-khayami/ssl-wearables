@@ -1,14 +1,14 @@
 defaults:
   - _self_
-  - data: wisdm_10s_few_class #ExtSens_10s
+  - data: realworld_10s_5c #wisdm_10s_few_class #realworld_10s_5c #ExtSens_10s
   - evaluation: all
   - model: resnet
   - dataloader: ten_sec
-  - evaluation_data: ExtSens_10s
+  - evaluation_data:  mymove_10s_5c #realworld_10s_5c #wisdm_10s_few_class ExtSens_10s
   - cross_dataset_mapping: wisdm4c_mymove5c
 
 #experiment modes
-split_method: "held_one_subject_out" # "k_shot" or "sequential" or "held_one_subject_out" or "random_kfold"
+split_method: "random_kfold" # "k_shot" or "sequential" or "held_one_subject_out" or "random_kfold"
 cross_dataset: false #set it true when you want to start training on one dataset and evaluate on another dataset
 use_pretrained: true #set it to true when you want to use a pretrained model (either on the same dataset or another dataset)
 
@@ -22,9 +22,11 @@ logging_path: /data/UKBB/SSL/evaluations
 report_root: "~/ssl-wearables/data/reports/"
 mapping_path: "conf/cross_dataset_mapping/Activity_label_mapping.json"
 # trained_label_mapping_path: "${report_root}2025-03-08_05-22/label_mapping.json" #ExtraSensory
-trained_label_mapping_path: "${report_root}2025-02-18_19-32/label_mapping.json" #WISDM (4 classes)
+trained_label_mapping_path: "${report_root}2025-04-01_16-54/label_mapping.json" #realworld_10s_5c (5 classes)
+# trained_label_mapping_path: "${report_root}2025-02-18_19-32/label_mapping.json" #WISDM (4 classes)
 # model_path: /home/hossein/ssl-wearables/2025-03-08_05:22:16tmp.pt # trained on Extra Sensory
-model_path: /home/hossein/ssl-wearables/2025-02-18_19:32:24tmp.pt # trained on WISDM (4 classes)
+# model_path: /home/hossein/ssl-wearables/2025-02-18_19:32:24tmp.pt # trained on WISDM (4 classes)
+model_path: /home/hossein/ssl-wearables/2025-04-01_16:54:10tmp.pt # trained on realworld_10s_5c (5 classes)
 # report_path: "${report_root}${data.dataset_name}_${evaluation.evaluation_name}_${data.subject_count}.csv"
 report_path: "${report_root}${data.dataset_name}_${evaluation.evaluation_name}_${data.subject_count}_${evaluation.subR}.csv"
-is_verbose: false
+is_verbose: true

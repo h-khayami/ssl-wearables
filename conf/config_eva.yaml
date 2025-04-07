@@ -1,11 +1,11 @@
 defaults:
   - _self_
-  - data: ExtSens_10s
+  - data: realworld_10s_5c #ExtSens_10s
   - evaluation: all
   - model: resnet
   - dataloader: ten_sec
 
-split_method: "held_one_subject_out" # "k_shot" or "sequential" or "held_one_subject_out" or "random_kfold"
+split_method: "random_kfold" # "k_shot" or "sequential" or "held_one_subject_out" or "random_kfold"
 use_pretrained: false
 gpu: -1
 gpu_ids: [0, 1, 2, 3]  # gpus to use if multi_gpu==true
@@ -17,4 +17,4 @@ logging_path: /data/UKBB/SSL/evaluations
 report_root: "~/ssl-wearables/data/reports/"
 # report_path: "${report_root}${data.dataset_name}_${evaluation.evaluation_name}_${data.subject_count}.csv"
 report_path: "${report_root}${data.dataset_name}_${evaluation.evaluation_name}_${data.subject_count}_${evaluation.subR}.csv"
-is_verbose: false
+is_verbose: true
