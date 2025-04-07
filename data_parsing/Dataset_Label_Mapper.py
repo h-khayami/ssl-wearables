@@ -28,6 +28,13 @@ class DatasetLabelMapper:
             mapper = np.vectorize(lambda x: labels_map.get(x.lower(), -1)) #convert labels to lower case and then map
             return mapper(y_test)
     
+    def map_to_reference_labels(self, y, dataset_name):
+        if dataset_name == "reference":
+            return y
+        else:
+            mapping = self.get_mapping(dataset_name)
+            return np.vectorize(lambda x: mapping.get(x, None))(y)
+
     def map_numeric_to_labels(self, y_test, dataset_name="reference", custom_mapping=None):
         if custom_mapping is None:
             if dataset_name == "reference":

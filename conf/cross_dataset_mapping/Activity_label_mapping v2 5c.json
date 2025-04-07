@@ -1,0 +1,69 @@
+{
+  "training_datasets": [
+    "REALWORLD",
+    "WISDM"
+  ],
+  "testing_datasets": [
+    "MyMove"
+  ],
+  "dataset_directories": {
+    "MyMove": "mymove_30Hz_10s",
+    "WISDM": "wisdm_30hz_clean",
+    "ExtraSensory": "ExtraSensory_30Hz_10s",
+    "PAMAP2": "pamap2_30Hz_10s",
+    "REALWORLD": "realworld_30hz_clean",
+    "CAPTURE24": "capture24_30Hz_full"
+  },
+  "reference_activities": {
+      "Lying": 0,
+      "Sitting": 1,
+      "Standing": 2,
+      "Walking": 3,
+      "Running": 4
+    },
+  "dataset_mappings": {
+      "MyMove": {
+        "sedentary_lying": 0,
+        "sedentary_sitting_other": 1,
+        "upright_standing": 2,
+        "upright_stepping_low": 3,
+        "upright_stepping_moderate": 3,
+        "upright_stepping_vigorous": 4
+    },
+    "WISDM": {
+        "sitting": 1,
+        "standing": 2,
+        "walking": 3,
+        "jogging": 4
+    },
+    "ExtraSensory": {
+        "sedentary_lying": 0,
+        "sedentary_sitting_other": 1,
+        "upright_standing": 2,
+        "upright_stepping_low": 3,
+        "upright_stepping_moderate": 3,
+        "upright_stepping_vigorous": 4
+    },
+    "PAMAP2": {
+        "Lying": 0,
+        "Sitting": 1,
+        "Standing": 2,
+        "Walking": 3,
+        "Running": 4
+    },
+    "REALWORLD": {
+        "lying": 0,
+        "sitting": 1,
+        "standing": 2,
+        "walking": 3,
+        "running": 4
+    },
+    "CAPTURE24": {
+        "sleep": 0,
+        "sedentary": 1,
+        "light": 3,
+        "moderate-vigorous": 4
+    }
+  }
+}
+  
