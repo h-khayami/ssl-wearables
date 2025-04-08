@@ -110,8 +110,14 @@ def freeze_weights(model):
     # Only freezing ConV layers for now
     # or it will lead to bad results
     # http://blog.datumbox.com/the-batch-normalization-layer-of-keras-is-broken/
+    head = next(iter(model.named_parameters()))[0].split(".")[0]
+    # print("Head: %s" % head)
+    if head == "module":
+        layer_type_index = 1
+    else:
+        layer_type_index = 0
     for name, param in model.named_parameters():
-        if name.split(".")[0] == "feature_extractor":
+        if name.split(".")[layer_type_index] == "feature_extractor":
             param.requires_grad = False
             i += 1
     print("Weights being frozen: %d" % i)
@@ -805,7 +811,12 @@ def cross_dataset_evaluation(train_data, test_data, cfg, my_device, log_dir):
     Y_test = le_test.transform(Y_test)
 
     # Create label mapping between dataset1 and dataset2
-    label_mapping = {str(k): int(v) for k, v in zip(le_train.classes_, le_test.transform(le_train.classes_))}
+    eval_label_mapping = {str(k): int(v) for k, v in zip(le_test.classes_, le_test.transform(le_test.classes_))}
+    with open(os.path.join(log_dir, "eval_label_mapping.json"), "w") as f:
+        json.dump(eval_label_mapping, f)
+
+    # Create label mapping between dataset1 and dataset2
+    label_mapping = {str(k): int(v) for k, v in zip(le_train.classes_, le_train.transform(le_train.classes_))}
     with open(os.path.join(log_dir, "label_mapping.json"), "w") as f:
         json.dump(label_mapping, f)
 
@@ -821,7 +832,7 @@ def cross_dataset_evaluation(train_data, test_data, cfg, my_device, log_dir):
     train_and_save_model(train_loader, val_loader, cfg, my_device, weights)
 
     # Evaluate the saved model on dataset2
-    results = evaluate_saved_model(test_loader, cfg, my_device, label_mapping, log_dir)
+    results = evaluate_saved_model(test_loader, cfg, my_device, log_dir)
     print(results)
     # Create report directory and generate classification report
     pathlib.Path(log_dir).mkdir(parents=True, exist_ok=True)
@@ -1263,7 +1274,7 @@ def main(cfg):
 
             print("Evaluate HARNET...")
             evaluate_harnet_classification(X_downsampled, Y, cfg, my_device, logger, log_dir_r, groups=P)
-    else:
+    
         if cfg.cross_dataset:
             task_message ="""\n
             ##############################################
@@ -1283,7 +1294,7 @@ def main(cfg):
             train_data = (X_downsampled, Y, P)
             cross_dataset_evaluation(train_data, test_data, cfg, my_device, log_dir_r)
             
-        else:
+    else:
             task_message = """\n
                 ##############################################
                             Load a pretrained model

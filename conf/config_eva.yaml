@@ -1,12 +1,13 @@
 defaults:
   - _self_
-  - data: realworld_10s_5c #ExtSens_10s
+  - data: realworld_wisdm #ExtSens_10s
   - evaluation: all
   - model: resnet
   - dataloader: ten_sec
 
 split_method: "random_kfold" # "k_shot" or "sequential" or "held_one_subject_out" or "random_kfold"
 use_pretrained: false
+cross_dataset: false
 gpu: -1
 gpu_ids: [0, 1, 2, 3]  # gpus to use if multi_gpu==true
 multi_gpu: true
