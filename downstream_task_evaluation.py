@@ -261,7 +261,7 @@ class RMSELoss(nn.Module):
         return self.mse(yhat, y)
 
 
-def train_mlp(model, train_loader, val_loader, cfg, my_device, weights):
+def train_mlp(model, train_loader, val_loader, cfg, my_device, weights, model_path_suffix = None):
     optimizer = optim.Adam(
         model.parameters(), lr=cfg.evaluation.learning_rate, amsgrad=True
     )
@@ -274,9 +274,12 @@ def train_mlp(model, train_loader, val_loader, cfg, my_device, weights):
             loss_fn = nn.CrossEntropyLoss()
     else:
         loss_fn = RMSELoss()
-
+    if model_path_suffix is not None:
+        this_model_path = cfg.model_path.split(".")[0] + model_path_suffix + ".pt"
+    else:
+        this_model_path = cfg.model_path
     early_stopping = EarlyStopping(
-        patience=cfg.evaluation.patience, path=cfg.model_path, verbose=True, delta=0.00001
+        patience=cfg.evaluation.patience, path=this_model_path, verbose=True, delta=0.00001
     )
     for epoch in range(cfg.evaluation.num_epoch):
         model.train()
@@ -458,6 +461,7 @@ def train_test_mlp(
     cfg,
     my_device,
     log_dir,
+    model_path_suffix =None,
     labels=None,
     encoder=None,
 ):
@@ -471,13 +475,16 @@ def train_test_mlp(
     # send_discord_message(f"Training MLP on {len(train_idxs)} samples")
     send_discord_message(f"training label distribution: {np.unique(y[train_idxs], return_counts=True)}")
     # send_discord_message(f"labelb weights: {weights}")
-    train_mlp(model, train_loader, val_loader, cfg, my_device, weights)
+    train_mlp(model, train_loader, val_loader, cfg, my_device, weights, model_path_suffix)
     send_discord_message(f"Training complete. Evaluating on {len(test_idxs)} samples")
 
     model = init_model(cfg, my_device)
-
-    model.load_state_dict(torch.load(cfg.model_path))
-    send_discord_message(f"Model loaded from {cfg.model_path}")
+    if model_path_suffix is not None:
+        this_model_path = cfg.model_path.split(".")[0] + model_path_suffix + ".pt"
+    else:
+        this_model_path = cfg.model_path
+    model.load_state_dict(torch.load(this_model_path))
+    send_discord_message(f"Model loaded from {this_model_path}")
     send_discord_message(f"Model evaluation started")
     y_test, y_test_pred, pid_test, probs = mlp_predict(
         model, test_loader, my_device, cfg
@@ -550,6 +557,7 @@ def evaluate_mlp(X_feats, y, cfg, my_device, logger, log_dir, groups=None):
                 cfg,
                 my_device,
                 os.path.join(log_dir, f"Fold{str(fold_num)}.csv"),
+                model_path_suffix=f"_F{fold_num}",
                 labels=labels,
                 encoder=le,
             )
@@ -1114,7 +1122,7 @@ def downsample_data(X, input_size):
     print("X transformed shape:", X_downsampled.shape)
     return X_downsampled
 
-@hydra.main(config_path="conf", config_name="config_eva")
+@hydra.main(config_path="conf", config_name="config_eva_ft")
 def main(cfg):
     """Evaluate hand-crafted vs deep-learned features"""
 

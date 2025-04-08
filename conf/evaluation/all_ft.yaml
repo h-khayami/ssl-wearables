@@ -12,7 +12,8 @@ flip_net_random_mlp: false
 harnet_ft: false
 load_weights: true
 freeze_weight: true
-flip_net_path: /data/ssl_wearable/model/mtl_best.mdl
+flip_net_path: /home/hossein/ssl-wearables/2025-04-08_10:30:51tmp.pt #model trained on realworld_wisdm (frozen representation) (5 classes)
+#flip_net_path: /data/ssl_wearable/model/mtl_best.mdl #based SSL model
 input_size: 300  # input size after resampling the raw data
 subR: 1
 
