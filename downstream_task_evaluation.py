@@ -385,12 +385,16 @@ def init_model(cfg, my_device):
     return model
 
 
-def setup_model(cfg, my_device):
+def setup_model(cfg, my_device, model_path_suffix=None):
     model = init_model(cfg, my_device)
 
     if cfg.evaluation.load_weights:
-        print(f"Loading weights from {cfg.evaluation.flip_net_path}")
-        load_weights(cfg.evaluation.flip_net_path, model, my_device)
+        if model_path_suffix is not None:
+            this_model_path = cfg.evaluation.flip_net_path.split(".")[0] + model_path_suffix + ".pt"
+        else:
+            this_model_path = cfg.evaluation.flip_net_path
+        print(f"Loading weights from {this_model_path}")
+        load_weights(this_model_path, model, my_device)
     if cfg.evaluation.freeze_weight:
         freeze_weights(model)
     return model
@@ -465,7 +469,7 @@ def train_test_mlp(
     labels=None,
     encoder=None,
 ):
-    model = setup_model(cfg, my_device)
+    model = setup_model(cfg, my_device, model_path_suffix)
     if cfg.is_verbose:
         print(model)
         summary(model, (3, cfg.evaluation.input_size))
@@ -1122,7 +1126,7 @@ def downsample_data(X, input_size):
     print("X transformed shape:", X_downsampled.shape)
     return X_downsampled
 
-@hydra.main(config_path="conf", config_name="config_eva_ft")
+@hydra.main(config_path="conf", config_name="config_eva_ft_person")
 def main(cfg):
     """Evaluate hand-crafted vs deep-learned features"""
 
