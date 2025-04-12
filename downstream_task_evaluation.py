@@ -205,7 +205,7 @@ def setup_data(train_idxs, test_idxs, X_feats, Y, groups, cfg):
                 tmp_Y_train[final_train_idxs],
                 tmp_Y_train[final_val_idxs],
             )
-        elif cfg.split_method == "sequential" or cfg.split_method == "k_shot":
+        elif cfg.split_method == "sequential" or cfg.split_method == "k_shot" or cfg.split_method == "k_shot_fixed" or cfg.split_method == "held_one_subject_out_k_shot":
             X_train, X_val, Y_train, Y_val = train_val_split_sequential(tmp_X_train, tmp_Y_train)
         elif cfg.split_method == "random_kfold":
             X_train, X_val, Y_train, Y_val = train_val_split(tmp_X_train, tmp_Y_train, group_train)
@@ -410,13 +410,41 @@ def get_train_test_split(cfg, X_feats, y, groups):
         folds = GroupShuffleSplit(
             cfg.num_split, test_size=0.2, random_state=42
         ).split(X_feats, y, groups=groups)
-    elif cfg.split_method == "sequential" or cfg.split_method == "k_shot":
+    elif cfg.split_method == "sequential" or cfg.split_method == "k_shot" or cfg.split_method == "k_shot_fixed":
         folds = get_train_test_split_personalized(cfg, X_feats, y, groups)
         send_discord_message(f"Personalized split: {len(folds)} participants")
+    elif cfg.split_method == "held_one_subject_out_k_shot":
+        folds = get_train_test_split_loso_k_shot(cfg, X_feats, y, groups)
     else:
         raise ValueError("Invalid split method")
     return folds
 
+def get_train_test_split_loso_k_shot(cfg, X_feats, y, groups):
+    folds = []
+    unique_participants = np.unique(groups)
+    train_ratio = cfg.train_ratio  # Fraction for training in sequential split
+    unique_activities = np.unique(y)
+    for participant in unique_participants:
+        participant_indices = np.where(groups == participant)[0]
+        loso_indices = np.where(groups != participant)[0]
+        X_participant, y_participant = X_feats[participant_indices], y[participant_indices]
+        x_loso, y_loso = X_feats[loso_indices], y[loso_indices]
+
+        train_indices, test_indices = [], []
+
+        if cfg.split_method == "held_one_subject_out_k_shot":
+            # select 50 samples of the participants for each activity
+            for activity in unique_activities:
+                test_activity_indices = np.where(y_participant == activity)[0]
+                train_activity_indices = np.where(y_loso == activity)[0]
+                if len(test_activity_indices) > 50:
+                    test_indices.extend(participant_indices[test_activity_indices[50:]])
+                K = min (cfg.k_shot, len(train_activity_indices))
+                train_indices.extend(np.random.choice(loso_indices[train_activity_indices], K, replace=False))
+
+        folds.append((np.array(train_indices), np.array(test_indices)))
+    
+    return folds
 
 def get_train_test_split_personalized(cfg, X_feats, y, groups):
     folds = []
@@ -451,6 +479,17 @@ def get_train_test_split_personalized(cfg, X_feats, y, groups):
                     test_indices.extend(participant_indices[activity_indices[K:]])
                 else:
                     train_indices.extend(participant_indices[activity_indices])  # Use all if less than K
+        elif cfg.split_method == "k_shot_fixed":
+            # K-shot learning: first K samples for training, fixed (after 50) rest for testing
+            K = cfg.k_shot  # Number of shots
+            for activity in unique_activities:
+                activity_indices = np.where(y_participant == activity)[0]
+                # Fixed split: first K samples for training, next 50 for testing
+                if len(activity_indices) > K and len(activity_indices) > 50:
+                    train_indices.extend(participant_indices[activity_indices[:K]])
+                    test_indices.extend(participant_indices[activity_indices[50:]])
+                # else:
+                #     train_indices.extend(participant_indices[activity_indices])  # Use all if less than K
          
         folds.append((np.array(train_indices), np.array(test_indices)))
     
@@ -479,6 +518,7 @@ def train_test_mlp(
     # send_discord_message(f"Training MLP on {len(train_idxs)} samples")
     send_discord_message(f"training label distribution: {np.unique(y[train_idxs], return_counts=True)}")
     # send_discord_message(f"labelb weights: {weights}")
+    model_path_suffix = None # do not save models for each fold. If you want to, comment this line
     train_mlp(model, train_loader, val_loader, cfg, my_device, weights, model_path_suffix)
     send_discord_message(f"Training complete. Evaluating on {len(test_idxs)} samples")
 
@@ -568,6 +608,7 @@ def evaluate_mlp(X_feats, y, cfg, my_device, logger, log_dir, groups=None):
         except Exception as e:
             error_message = f"🚨 Error in training: {str(e)}"
             send_discord_message(error_message)
+            print(error_message)
         
         results.append(result)
     print(results)
