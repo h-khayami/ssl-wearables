@@ -423,9 +423,9 @@ def init_model(cfg, my_device):
         )
     elif cfg.model.name.split("_")[0] == "Transformer":
         model = IMUTransformerClassifier(
-            input_dim=cfg.data.input_size,
+            input_dim=cfg.evaluation.input_size,
             embed_dim=cfg.model.embed_dim,
-            seq_length=cfg.data.input_size,
+            seq_length=cfg.evaluation.input_size,
             num_heads=cfg.model.transformer_num_heads,
             num_layers=cfg.model.transformer_num_layers,
             num_classes=cfg.data.output_size

@@ -1,8 +1,8 @@
 defaults:
   - _self_
   - data: realworld_wisdm
-  - evaluation: mlp
-  - model: mlp
+  - evaluation: transformer
+  - model: transformer
   - dataloader: ten_sec
 
 #experiment modes
@@ -16,7 +16,7 @@ augmentation: false
 
 gpu: -1
 gpu_ids: [0, 1, 2, 4]  # gpus to use if multi_gpu==true
-multi_gpu: true
+multi_gpu: false
 
 
 logging_path: /data/ssl_wearable/logs
