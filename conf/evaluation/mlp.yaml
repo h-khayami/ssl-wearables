@@ -1,0 +1,17 @@
+feat_hand_crafted: false
+feat_random_cnn: false
+rotation_net: false
+flip_net: false
+flip_net_ft: false
+flip_net_mlp: false
+harnet_ft: false
+load_weights: false
+freeze_weight: false
+mlp_net: true
+evaluation_name: mlp
+input_size: 300
+num_epoch: 10
+num_workers: 6
+learning_rate: 0.001
+patience: 50
+

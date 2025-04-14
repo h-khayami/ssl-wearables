@@ -8,6 +8,7 @@ PID_path:  "${data.data_root}/pid.npy"
 sample_rate: 30
 task_type: 'classify'
 output_size: 5
+input_size: 900
 batch_size: 32
 held_one_subject_out: false
 weighted_loss_fn: true

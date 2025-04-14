@@ -1,0 +1,4 @@
+embed_dim: 128
+name: "MLP_inp${evaluation.input_size}_embed${model.embed_dim}_out${data.output_size}"
+resnet_version: 0
+is_ae: false

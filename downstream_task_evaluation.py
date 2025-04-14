@@ -21,7 +21,7 @@ from sslearning.scores import classification_scores, classification_report
 import copy
 from sklearn import preprocessing
 from sslearning.data.data_loader import NormalDataset
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 from torch.autograd import Variable
 import torch.optim as optim
 from torchsummary import summary # print model summary
@@ -44,8 +44,51 @@ python downstream_task_evaluation.py -m data=rowlands_10s,oppo_10s
 report_root='/home/cxx579/ssw/reports/mtl/aot'
 is_dist=false gpu=0 model=resnet evaluation=mtl_1k_ft evaluation.task_name=aot
 """
-
-
+""" 
+Model Definition
+"""
+class IMUMLPClassifier(nn.Module):
+    def __init__(self, input_dim=300*3, embed_dim=64, num_classes=5):
+        super().__init__()
+        self.flatten = nn.Flatten()
+        self.embedding = nn.Linear(input_dim, embed_dim)
+        
+        self.hidden_dim = hidden_dim = embed_dim * 4
+        self.mlp = nn.Sequential(
+            nn.Linear(embed_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, embed_dim)
+        )
+        self.head = nn.Linear(embed_dim, num_classes)
+        
+    def forward(self, x):
+        x_embedding = self.embedding(self.flatten(x))
+        x_encoded = self.mlp(x_embedding)
+        output = self.head(x_encoded)
+        return output
+    
+class IMUTransformerClassifier(nn.Module):
+    def __init__(self, input_dim=3, embed_dim=128, seq_length=300, num_heads=4, num_layers=2, num_classes=5):
+        super().__init__()
+        self.embedding = nn.Linear(input_dim, embed_dim)
+        self.pos_embedding = nn.Embedding(seq_length, embed_dim)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=embed_dim, nhead=num_heads, 
+                                                   dim_feedforward=embed_dim*4)#, batch_first=True) not supported in Pytorch 1.7.0
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.head = nn.Linear(embed_dim, num_classes)
+        
+    def forward(self, x):
+        B, T, _ = x.shape
+        x = self.embedding(x)
+        pos = torch.arange(T, device=x.device).unsqueeze(0).expand(B, T)
+        x = x + self.pos_embedding(pos)
+        x = x.transpose(0, 1)  # Transpose to (T, B, embed_dim) comment this if using batch_first=True and PyTorch >= 1.9.0
+        x = self.transformer_encoder(x)
+        x = x.transpose(0, 1)  # Transpose back to (B, T, embed_dim) comment this if using batch_first=True and PyTorch >= 1.9.0
+        x = x.mean(dim=1)  # Global average pooling over time
+        out = self.head(x)
+        return out
+    
 def send_discord_message(message):
     # Load variables from .env file
     load_dotenv()
@@ -292,13 +335,13 @@ def train_mlp(model, train_loader, val_loader, cfg, my_device, weights, model_pa
                 true_y = my_Y.to(my_device, dtype=torch.float)
             else:
                 true_y = my_Y.to(my_device, dtype=torch.long)
-
+            optimizer.zero_grad()
             logits = model(my_X)
             loss = loss_fn(logits, true_y)
             loss.backward()
             optimizer.step()
 
-            optimizer.zero_grad()
+            
 
             pred_y = torch.argmax(logits, dim=1)
             train_acc = torch.sum(pred_y == true_y)
@@ -371,6 +414,21 @@ def init_model(cfg, my_device):
             is_eva=True,
             resnet_version=cfg.model.resnet_version,
             epoch_len=cfg.dataloader.epoch_len,
+        )
+    elif cfg.model.name.split("_")[0] == "MLP":
+        model = IMUMLPClassifier(
+            input_dim=cfg.data.input_size,
+            embed_dim=cfg.model.embed_dim,
+            num_classes=cfg.data.output_size,
+        )
+    elif cfg.model.name.split("_")[0] == "Transformer":
+        model = IMUTransformerClassifier(
+            input_dim=cfg.data.input_size,
+            embed_dim=cfg.model.embed_dim,
+            seq_length=cfg.data.input_size,
+            num_heads=cfg.model.transformer_num_heads,
+            num_layers=cfg.model.transformer_num_layers,
+            num_classes=cfg.data.output_size
         )
     else:
         model = SSLNET(
@@ -601,7 +659,7 @@ def evaluate_mlp(X_feats, y, cfg, my_device, logger, log_dir, groups=None):
                 cfg,
                 my_device,
                 os.path.join(log_dir, f"Fold{str(fold_num)}.csv"),
-                model_path_suffix=f"_F{fold_num}",
+                # model_path_suffix=f"_F{fold_num}",
                 labels=labels,
                 encoder=le,
             )
@@ -1166,8 +1224,198 @@ def downsample_data(X, input_size):
     X_downsampled = np.transpose(X_downsampled, (0, 2, 1))
     print("X transformed shape:", X_downsampled.shape)
     return X_downsampled
+def setup_data_no_val(train_idxs, test_idxs, X_feats, Y, groups, cfg):
+    if len(train_idxs) > 0:
+        X_train = X_feats[train_idxs]
+        Y_train = Y[train_idxs]
+    else:
+        tmp_X_train, tmp_Y_train = None, None
 
-@hydra.main(config_path="conf", config_name="config_eva_ft_person")
+    if len(test_idxs) > 0:
+        X_test = X_feats[test_idxs]
+        Y_test = Y[test_idxs]
+        group_test = groups[test_idxs]
+    else:
+        X_test, Y_test, group_test = None, None, None
+ 
+    my_transform = None
+    if cfg.augmentation:
+        my_transform = transforms.Compose([RandomSwitchAxis(), RotationAxis()])
+    X_train_t = torch.tensor(X_train, dtype=torch.float32)
+    Y_train_t = torch.tensor(Y_train, dtype=torch.long)
+    X_test_t = torch.tensor(X_test, dtype=torch.float32)
+    Y_test_t = torch.tensor(Y_test, dtype=torch.long)
+    train_dataset = NormalDataset(
+        X_train, Y_train, name="train", isLabel=True, transform=my_transform
+    ) if X_train is not None else None
+   
+    test_dataset = NormalDataset(
+        X_test, Y_test, pid=group_test, name="test", isLabel=True
+    )  if X_test is not None else None
+
+    val_dataset = NormalDataset(
+        X_test, Y_test, name="test", isLabel=True
+    )  if X_test is not None else None
+
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=cfg.data.batch_size,
+        shuffle=True,
+        num_workers=cfg.evaluation.num_workers,
+    ) if train_dataset is not None else None
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=cfg.data.batch_size,
+        num_workers=cfg.evaluation.num_workers,
+    ) if val_dataset is not None else None
+    
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=cfg.data.batch_size,
+        num_workers=cfg.evaluation.num_workers,
+    ) if test_dataset is not None else None
+
+    weights = []
+    if cfg.data.task_type == "classify" and Y_train is not None:
+        weights = get_class_weights(Y_train)
+    return train_loader, val_loader, test_loader, weights
+
+def train_model(model, train_loader, test_loader, cfg, my_device, weights, model_path_suffix = None):
+    optimizer = optim.Adam(
+        model.parameters(), lr=cfg.evaluation.learning_rate, amsgrad=True
+    )
+    print(f"Using {cfg.evaluation.learning_rate} as learning rate")
+    if cfg.data.task_type == "classify":
+        if cfg.data.weighted_loss_fn:
+            weights = torch.FloatTensor(weights).to(my_device)
+            loss_fn = nn.CrossEntropyLoss(weight=weights)
+        else:
+            loss_fn = nn.CrossEntropyLoss()
+    else:
+        loss_fn = RMSELoss()
+    if model_path_suffix is not None:
+        this_model_path = cfg.model_path.split(".")[0] + model_path_suffix + ".pt"
+    else:
+        this_model_path = cfg.model_path
+    logs = {'train_loss': [], 'test_loss': [], 'train_acc': [], 'test_acc': []}
+    for epoch in range(cfg.evaluation.num_epoch):
+        model.train()
+        train_losses = []
+        train_acces = []
+        for i, (my_X, my_Y) in enumerate(train_loader):
+            my_X, my_Y = Variable(my_X), Variable(my_Y)
+            my_X = my_X.to(my_device, dtype=torch.float)
+            if cfg.data.task_type == "regress":
+                true_y = my_Y.to(my_device, dtype=torch.float)
+            else:
+                true_y = my_Y.to(my_device, dtype=torch.long)
+            optimizer.zero_grad()
+            logits = model(my_X)
+            loss = loss_fn(logits, true_y)
+            loss.backward()
+            optimizer.step()
+
+            
+
+            pred_y = torch.argmax(logits, dim=1)
+            train_acc = torch.sum(pred_y == true_y)
+            train_acc = train_acc / (pred_y.size()[0])
+
+            train_losses.append(loss.cpu().detach().numpy())
+            train_acces.append(train_acc.cpu().detach().numpy())
+        
+        test_loss, test_acc = evaluate_model(model, test_loader, my_device, loss_fn, cfg)
+
+        logs['train_loss'].append(np.mean(train_losses))
+        logs['train_acc'].append(np.mean(train_acces))
+        logs['test_loss'].append(test_loss)
+        logs['test_acc'].append(test_acc)
+        epoch_len = len(str(cfg.evaluation.num_epoch))
+        print_msg = (
+            f"[{epoch:>{epoch_len}}/{cfg.evaluation.num_epoch:>{epoch_len}}] "
+            + f"Train Loss: {logs['train_loss'][-1]:.4f} "
+            + f"Train Acc: {logs['train_acc'][-1]:.4f} "
+            + f"Test Loss: {logs['test_loss'][-1]:.4f} "
+            + f"Test Acc: {logs['test_acc'][-1]:.4f} "
+        )
+        print(print_msg)
+
+
+    return model,logs
+# Training and Evaluation 
+def train_and_evaluate(train_idxs, test_idxs, X_feats, y,  groups, cfg, my_device,  logger, log_dir,  model_path_suffix=None):
+      
+    # model.to(my_device)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=cfg.evaluation.learning_rate)
+    # criterion = nn.CrossEntropyLoss()
+    model = setup_model(cfg, my_device, model_path_suffix)
+    if cfg.is_verbose:
+        print(model)
+        summary(model, (3, cfg.evaluation.input_size))
+    train_loader, val_loader, test_loader, weights = setup_data_no_val(train_idxs, test_idxs, X_feats, y, groups, cfg)
+    model, logs = train_model(model, train_loader, val_loader, cfg, my_device, weights, model_path_suffix)
+    y_test, y_test_pred, pid_test, probs = mlp_predict(model, test_loader, my_device, cfg)
+    send_discord_message(f"Model evaluation complete")
+    results = classification_scores(y_test, y_test_pred, pid_test, probs, save=True, save_path=log_dir)
+    send_discord_message(f"Predictions on test set saved to {log_dir}")
+    return results, logs
+
+def train_and_evaluate_mlp(X_feats, y, cfg, my_device, logger, log_dir, groups=None):
+    """Train a MLP with X_feats and Y.
+    Report a variety of performance metrics based on multiple runs."""
+
+    le = None
+    labels = None
+    if cfg.data.task_type == "classify":
+        le = preprocessing.LabelEncoder()
+        labels = np.unique(y)
+        le.fit(y)
+        y = le.transform(y)
+    else:
+        y = y * 1.0
+    # Create a mapping and ensure keys and values are standard Python types
+    label_mapping = {str(k): int(v) for k, v in zip(le.classes_, le.transform(le.classes_))}
+    print(label_mapping)  # {'Cycling': 0, 'Running': 1, 'Walking': 2}
+    send_discord_message(f"Label mapping: {label_mapping}")
+    with open(os.path.join(log_dir, "label_mapping.json"), "w") as f:
+        json.dump(label_mapping, f)
+
+    if isinstance(X_feats, pd.DataFrame):
+        X_feats = X_feats.to_numpy()
+
+    folds = get_train_test_split(cfg, X_feats, y, groups)
+    if cfg.split_method == "random_kfold" or cfg.split_method == "held_one_subject_out":
+        total_folds = cfg.num_split
+    else:
+        total_folds = len(folds)
+    results = []
+    for fold_num, (train_idxs, test_idxs) in enumerate(folds, 1):
+        print(f"Processing fold {fold_num}/{total_folds}")
+        send_discord_message(f"Processing fold {fold_num}/{total_folds}")
+        print(f"Training on {len(train_idxs)} samples")
+        print(f"Evaluating on {len(test_idxs)} samples")
+        print(f"Unique labels in training set:{np.unique(y[train_idxs])}")
+        # try:
+        result,logs = train_and_evaluate(train_idxs, test_idxs, X_feats, y,  
+                                             groups, cfg, my_device,  logger, 
+                                             os.path.join(log_dir, f"Fold{str(fold_num)}.csv"),  model_path_suffix=None)
+
+        # except Exception as e:
+        #     error_message = f"🚨 Error in training: {str(e)}"
+        #     send_discord_message(error_message)
+        #     print(error_message)
+        
+        results.append(result)
+    print(results)
+    # Create report directory and generate classification report
+    pathlib.Path(log_dir).mkdir(parents=True, exist_ok=True)
+    report_filename = os.path.basename(cfg.report_path)
+    log_path = os.path.join(log_dir, report_filename)
+    classification_report(results, log_path)
+
+@hydra.main(config_path="conf", config_name="config_eva_mlp")
 def main(cfg):
     """Evaluate hand-crafted vs deep-learned features"""
 
@@ -1231,9 +1479,25 @@ def main(cfg):
         Y_qnt = pd.Series(Y).quantile((0, 0.25, 0.5, 0.75, 1))
         Y_qnt.index = ("min", "25th", "median", "75th", "max")
         print(Y_qnt)
+    results = {}
 
     if cfg.use_pretrained == False:
-
+        if cfg.evaluation.mlp_net:
+            task_message = """\n
+            ##############################################
+                                 MLP
+            ##############################################
+            """
+            print(task_message)
+            send_discord_message(task_message)
+            X_downsampled = downsample_data(X, cfg.evaluation.input_size)
+            classes = np.unique(Y)
+            num_classes = len(classes)
+            _, seq_len, input_dim = X_downsampled.shape # (15317, 300, 3); data history
+            train_and_evaluate_mlp(X_downsampled, Y, cfg, my_device, logger, log_dir_r, groups=P)
+            # evaluate_mlp(X_downsampled, Y, cfg, my_device, logger,log_dir_r, groups=P)
+            # mlp_model = IMUMLPClassifier(input_dim=seq_len*input_dim, embed_dim=cfg.model.embed_dim, num_classes=num_classes)
+            # results["MLP"] = train_and_evaluate(mlp_model, "MLP", X_downsampled, Y, cfg, my_device, logger,log_dir_r, groups=P)
         if cfg.evaluation.feat_hand_crafted:
             task_message ="""\n
             ##############################################
