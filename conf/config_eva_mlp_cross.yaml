@@ -1,12 +1,13 @@
 defaults:
   - _self_
-  - data: mymove_10s_5c_v2
-  - evaluation: mlp
-  - model: mlp
+  - data: realworld_wisdm
+  - evaluation: transformer
+  - model: transformer
   - dataloader: ten_sec
+  - evaluation_data: mymove_10s_5c_v2 #realworld_10s_5c #wisdm_10s_few_class #ExtSens_10s
 
 #experiment modes
-cross_dataset: false #set it true when you want to start training on one dataset and evaluate on another dataset
+cross_dataset: true #set it true when you want to start training on one dataset and evaluate on another dataset
 use_pretrained: false #set it to true when you want to use a pretrained model (either on the same dataset or another dataset)
 split_method: "random_kfold" # "k_shot" or "sequential" or "held_one_subject_out" or "random_kfold" or "k_shot_fixed" or "held_one_subject_out_k_shot"
 k_shot: 50 # number of shots for k-shot learning

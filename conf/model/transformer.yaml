@@ -1,5 +1,5 @@
 embed_dim: 128
-transformer_num_heads: 4
+transformer_num_heads: 8
 transformer_num_layers: 2
 name: "Transformer_inp${evaluation.input_size}_head${model.transformer_num_heads}_embed${model.embed_dim}_out${data.output_size}"
 resnet_version: 0

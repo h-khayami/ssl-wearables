@@ -11,4 +11,5 @@ weighted_sample: true
 batch_size: 32
 held_one_subject_out: true
 output_size: 5
+input_size: 900
 weighted_loss_fn: true

@@ -10,8 +10,8 @@ freeze_weight: false
 mlp_net: true
 evaluation_name: transformer
 input_size: 300
-num_epoch: 10
+num_epoch: 100
 num_workers: 6
 learning_rate: 0.001
-patience: 50
+patience: 100
 

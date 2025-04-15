@@ -324,6 +324,8 @@ def train_mlp(model, train_loader, val_loader, cfg, my_device, weights, model_pa
     early_stopping = EarlyStopping(
         patience=cfg.evaluation.patience, path=this_model_path, verbose=True, delta=0.00001
     )
+    logs = {'train_loss': [], 'val_loss': [], 'train_acc': [], 'val_acc': []}
+
     for epoch in range(cfg.evaluation.num_epoch):
         model.train()
         train_losses = []
@@ -352,7 +354,10 @@ def train_mlp(model, train_loader, val_loader, cfg, my_device, weights, model_pa
         val_loss, val_acc = evaluate_model(
             model, val_loader, my_device, loss_fn, cfg
         )
-
+        logs['train_loss'].append(np.mean(train_losses))
+        logs['train_acc'].append(np.mean(train_acces))
+        logs['val_loss'].append(val_loss)
+        logs['val_acc'].append(val_acc)
         epoch_len = len(str(cfg.evaluation.num_epoch))
         print_msg = (
             f"[{epoch:>{epoch_len}}/{cfg.evaluation.num_epoch:>{epoch_len}}] "
@@ -365,6 +370,7 @@ def train_mlp(model, train_loader, val_loader, cfg, my_device, weights, model_pa
         if early_stopping.early_stop:
             print("Early stopping")
             break
+    np.savez(f"{cfg.logging_path}/train_log.npz", **logs)
     return model
 
 
@@ -1356,6 +1362,11 @@ def train_and_evaluate(train_idxs, test_idxs, X_feats, y,  groups, cfg, my_devic
         summary(model, (3, cfg.evaluation.input_size))
     train_loader, val_loader, test_loader, weights = setup_data_no_val(train_idxs, test_idxs, X_feats, y, groups, cfg)
     model, logs = train_model(model, train_loader, val_loader, cfg, my_device, weights, model_path_suffix)
+    # Save the model
+    if cfg.save_model:
+        torch.save(model.state_dict(), cfg.model_path)
+        send_discord_message(f"Model saved to {cfg.model_path}")
+    # Evaluate the model
     y_test, y_test_pred, pid_test, probs = mlp_predict(model, test_loader, my_device, cfg)
     send_discord_message(f"Model evaluation complete")
     results = classification_scores(y_test, y_test_pred, pid_test, probs, save=True, save_path=log_dir)
@@ -1415,7 +1426,7 @@ def train_and_evaluate_mlp(X_feats, y, cfg, my_device, logger, log_dir, groups=N
     log_path = os.path.join(log_dir, report_filename)
     classification_report(results, log_path)
 
-@hydra.main(config_path="conf", config_name="config_eva_mlp")
+@hydra.main(config_path="conf", config_name="config_eva_mlp_cross")
 def main(cfg):
     """Evaluate hand-crafted vs deep-learned features"""
 
@@ -1432,8 +1443,9 @@ def main(cfg):
     # os.makedirs(log_dir_r, exist_ok=True)
     log_dir_r = pathlib.Path(os.path.expanduser(cfg.report_root)) / dtm_string
     log_dir_r.mkdir(parents=True, exist_ok=True)
+    cfg.logging_path = log_dir_r
     if cfg.use_pretrained == False:
-        cfg.model_path = os.path.join(get_original_cwd(), dt_string + "tmp.pt")
+        cfg.model_path = os.path.join(get_original_cwd(),"model_check_point", dt_string + "tmp.pt")
     fh = logging.FileHandler(log_dir)
     fh.setLevel(logging.INFO)
     logger.addHandler(fh)
@@ -1483,133 +1495,147 @@ def main(cfg):
 
     if cfg.use_pretrained == False:
         if cfg.evaluation.mlp_net:
-            task_message = """\n
-            ##############################################
-                                 MLP
-            ##############################################
-            """
-            print(task_message)
-            send_discord_message(task_message)
-            X_downsampled = downsample_data(X, cfg.evaluation.input_size)
-            classes = np.unique(Y)
-            num_classes = len(classes)
-            _, seq_len, input_dim = X_downsampled.shape # (15317, 300, 3); data history
-            train_and_evaluate_mlp(X_downsampled, Y, cfg, my_device, logger, log_dir_r, groups=P)
-            # evaluate_mlp(X_downsampled, Y, cfg, my_device, logger,log_dir_r, groups=P)
-            # mlp_model = IMUMLPClassifier(input_dim=seq_len*input_dim, embed_dim=cfg.model.embed_dim, num_classes=num_classes)
-            # results["MLP"] = train_and_evaluate(mlp_model, "MLP", X_downsampled, Y, cfg, my_device, logger,log_dir_r, groups=P)
-        if cfg.evaluation.feat_hand_crafted:
-            task_message ="""\n
-            ##############################################
-                        Hand-crafted features+RF
-            ##############################################
-            """
-            print(task_message)
-            send_discord_message(task_message)
-            # Extract hand-crafted features
-            print("Extracting features...")
-            X_handfeats = pd.DataFrame(
-                [handcraft_features(x, sample_rate=sample_rate) for x in tqdm(X)]
-            )
-            print("X_handfeats shape:", X_handfeats.shape)
+            if cfg.cross_dataset:
+                task_message = """\n
+                ##############################################
+                         MLP/Transformer cross-dataset
+                ##############################################
+                """
+                print(task_message)
+                send_discord_message(task_message)
 
-            print("Train-test RF...")
-            evaluate_feats(
-                X_handfeats, Y, cfg, logger, groups=P, task_type=task_type
-            )
-
-        if cfg.evaluation.feat_random_cnn:
-            task_message = """\n
-            ##############################################
-                        Random CNN features+RF
-            ##############################################
-            """
-            print(task_message)
-            send_discord_message(task_message)
-            # Extract CNN features
-            print("Extracting features...")
-            if cfg.evaluation.network == "vgg":
-                model = cnn1()
+                 # Load evaluation dataset
+                X_eval = np.load(cfg.evaluation_data.X_path)
+                Y_eval = np.load(cfg.evaluation_data.Y_path)
+                P_eval = np.load(cfg.evaluation_data.PID_path)  # participant IDs
+                X_downsampled = downsample_data(X, cfg.evaluation.input_size)
+                X_eval_downsampled = downsample_data(X_eval, cfg.evaluation.input_size)
+                test_data = (X_eval_downsampled, Y_eval, P_eval)
+                train_data = (X_downsampled, Y, P)
+                cross_dataset_evaluation(train_data, test_data, cfg, my_device, log_dir_r)
             else:
-                # get cnn
-                model = Resnet(output_size=cfg.data.output_size, cfg=cfg)
-            model.to(my_device, dtype=torch.float)
-            input_size = cfg.evaluation.input_size
+                task_message = """\n
+                ##############################################
+                            MLP/Transformer
+                ##############################################
+                """
+                print(task_message)
+                send_discord_message(task_message)
+                X_downsampled = downsample_data(X, cfg.evaluation.input_size)
+                train_and_evaluate_mlp(X_downsampled, Y, cfg, my_device, logger, log_dir_r, groups=P)
+        else:
+            if cfg.evaluation.feat_hand_crafted:
+                task_message ="""\n
+                ##############################################
+                            Hand-crafted features+RF
+                ##############################################
+                """
+                print(task_message)
+                send_discord_message(task_message)
+                # Extract hand-crafted features
+                print("Extracting features...")
+                X_handfeats = pd.DataFrame(
+                    [handcraft_features(x, sample_rate=sample_rate) for x in tqdm(X)]
+                )
+                print("X_handfeats shape:", X_handfeats.shape)
 
-            X_deepfeats = forward_by_batches(model, X, input_size, my_device)
-            print("X_deepfeats shape:", X_deepfeats.shape)
+                print("Train-test RF...")
+                evaluate_feats(
+                    X_handfeats, Y, cfg, logger, groups=P, task_type=task_type
+                )
 
-            print("Train-test RF...")
-            evaluate_feats(X_deepfeats, Y, cfg, logger, groups=P)
+            if cfg.evaluation.feat_random_cnn:
+                task_message = """\n
+                ##############################################
+                            Random CNN features+RF
+                ##############################################
+                """
+                print(task_message)
+                send_discord_message(task_message)
+                # Extract CNN features
+                print("Extracting features...")
+                if cfg.evaluation.network == "vgg":
+                    model = cnn1()
+                else:
+                    # get cnn
+                    model = Resnet(output_size=cfg.data.output_size, cfg=cfg)
+                model.to(my_device, dtype=torch.float)
+                input_size = cfg.evaluation.input_size
 
-        if cfg.evaluation.flip_net:
-            task_message ="""\n
-            ##############################################
-                        Flip_net+RF
-            ##############################################
+                X_deepfeats = forward_by_batches(model, X, input_size, my_device)
+                print("X_deepfeats shape:", X_deepfeats.shape)
+
+                print("Train-test RF...")
+                evaluate_feats(X_deepfeats, Y, cfg, logger, groups=P)
+
+            if cfg.evaluation.flip_net:
+                task_message ="""\n
+                ##############################################
+                            Flip_net+RF
+                ##############################################
+                """
+                print(task_message)
+                send_discord_message(task_message)
+                # Extract CNN features
+                print("Extracting features...")
+                cnn = cnn1()
+                cnn.to(my_device, dtype=torch.float)
+                load_weights(cfg.evaluation.flip_net_path, cnn, my_device)
+                input_size = cfg.evaluation.input_size
+
+                X_deepfeats = forward_by_batches(cnn, X, input_size, my_device)
+                print("X_deepfeats shape:", X_deepfeats.shape)
+
+                print("Train-test RF...")
+                evaluate_feats(X_deepfeats, Y, cfg, logger, groups=P)
+
             """
-            print(task_message)
-            send_discord_message(task_message)
-            # Extract CNN features
-            print("Extracting features...")
-            cnn = cnn1()
-            cnn.to(my_device, dtype=torch.float)
-            load_weights(cfg.evaluation.flip_net_path, cnn, my_device)
-            input_size = cfg.evaluation.input_size
-
-            X_deepfeats = forward_by_batches(cnn, X, input_size, my_device)
-            print("X_deepfeats shape:", X_deepfeats.shape)
-
-            print("Train-test RF...")
-            evaluate_feats(X_deepfeats, Y, cfg, logger, groups=P)
-
-        """
-        Start of MLP classifier evaluation
-        """
-
-        if cfg.evaluation.flip_net_ft:
-            task_message = """\n
-            ##############################################
-                        Flip_net+MLP
-            ##############################################
+            Start of MLP classifier evaluation
             """
-            print(task_message)
-            send_discord_message(task_message)
-            X_downsampled = downsample_data(X, cfg.evaluation.input_size)
 
-            print("Train-test Flip_net+MLP...")
-            evaluate_mlp(X_downsampled, Y, cfg, my_device, logger,log_dir_r, groups=P)
-        if cfg.evaluation.harnet_ft:
-            task_message = """\n
-            ##############################################
-                        HARNET pretrained
-            ##############################################
-            """
-            print(task_message)
-            send_discord_message(task_message)
-            X_downsampled = downsample_data(X, cfg.evaluation.input_size)
+            if cfg.evaluation.flip_net_ft:
+                task_message = """\n
+                ##############################################
+                            Flip_net+MLP
+                ##############################################
+                """
+                print(task_message)
+                send_discord_message(task_message)
+                X_downsampled = downsample_data(X, cfg.evaluation.input_size)
 
-            print("Evaluate HARNET...")
-            evaluate_harnet_classification(X_downsampled, Y, cfg, my_device, logger, log_dir_r, groups=P)
-    
-        if cfg.cross_dataset:
-            task_message ="""\n
-            ##############################################
-                        Cross-dataset evaluation
-            ##############################################
-            """
-            print(task_message)
-            send_discord_message(task_message)
-            
-            # Load evaluation dataset
-            X_eval = np.load(cfg.evaluation_data.X_path)
-            Y_eval = np.load(cfg.evaluation_data.Y_path)
-            P_eval = np.load(cfg.evaluation_data.PID_path)  # participant IDs
-            X_downsampled = downsample_data(X, cfg.evaluation.input_size)
-            X_eval_downsampled = downsample_data(X_eval, cfg.evaluation.input_size)
-            test_data = (X_eval_downsampled, Y_eval, P_eval)
-            train_data = (X_downsampled, Y, P)
-            cross_dataset_evaluation(train_data, test_data, cfg, my_device, log_dir_r)
+                print("Train-test Flip_net+MLP...")
+                evaluate_mlp(X_downsampled, Y, cfg, my_device, logger,log_dir_r, groups=P)
+            if cfg.evaluation.harnet_ft:
+                task_message = """\n
+                ##############################################
+                            HARNET pretrained
+                ##############################################
+                """
+                print(task_message)
+                send_discord_message(task_message)
+                X_downsampled = downsample_data(X, cfg.evaluation.input_size)
+
+                print("Evaluate HARNET...")
+                evaluate_harnet_classification(X_downsampled, Y, cfg, my_device, logger, log_dir_r, groups=P)
+        
+            if cfg.cross_dataset:
+                task_message ="""\n
+                ##############################################
+                            Cross-dataset evaluation
+                ##############################################
+                """
+                print(task_message)
+                send_discord_message(task_message)
+                
+                # Load evaluation dataset
+                X_eval = np.load(cfg.evaluation_data.X_path)
+                Y_eval = np.load(cfg.evaluation_data.Y_path)
+                P_eval = np.load(cfg.evaluation_data.PID_path)  # participant IDs
+                X_downsampled = downsample_data(X, cfg.evaluation.input_size)
+                X_eval_downsampled = downsample_data(X_eval, cfg.evaluation.input_size)
+                test_data = (X_eval_downsampled, Y_eval, P_eval)
+                train_data = (X_downsampled, Y, P)
+                cross_dataset_evaluation(train_data, test_data, cfg, my_device, log_dir_r)
             
     else:
             task_message = """\n
