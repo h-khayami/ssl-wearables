@@ -410,6 +410,35 @@ def mlp_predict(model, data_loader, my_device, cfg):
         probs_list.numpy(),  # Return probabilities as NumPy array
     )
 
+def extract_features(model, data_loader, my_device, cfg):
+    """
+    Extract features from the model without applying softmax or argmax.
+
+    Parameters:
+        model (nn.Module): The trained model.
+        data_loader (DataLoader): DataLoader for the input data.
+        my_device (str): Device to run the model on (e.g., 'cuda' or 'cpu').
+        cfg (OmegaConf): Configuration object.
+
+    Returns:
+        numpy.ndarray: Extracted features (feat_X).
+    """
+    feat_list = []
+    model.eval()
+    for i, (my_X, _, _) in enumerate(data_loader):  # Ignore labels and PIDs
+        with torch.no_grad():
+            my_X = Variable(my_X)
+            my_X = my_X.to(my_device, dtype=torch.float)
+            # Extract features directly from the model
+            if hasattr(model, "module"):
+                features = model.module.feature_extractor(my_X)
+            else:
+                features = model.feature_extractor(my_X)
+            feat_list.append(features.cpu())  # Store features on CPU
+
+    # Concatenate all features into a single array
+    feat_X = torch.cat(feat_list).numpy()
+    return feat_X
 
 def init_model(cfg, my_device):
     if cfg.model.is_ae:
@@ -572,7 +601,7 @@ def train_test_mlp(
     labels=None,
     encoder=None,
 ):
-    model = setup_model(cfg, my_device, model_path_suffix)
+    model = setup_model(cfg, my_device, model_path_suffix) #let pick the model_path_suffix if you want to load the model with suffix
     if cfg.is_verbose:
         print(model)
         summary(model, (3, cfg.evaluation.input_size))
@@ -582,7 +611,7 @@ def train_test_mlp(
     # send_discord_message(f"Training MLP on {len(train_idxs)} samples")
     send_discord_message(f"training label distribution: {np.unique(y[train_idxs], return_counts=True)}")
     # send_discord_message(f"labelb weights: {weights}")
-    model_path_suffix = None # do not save models for each fold. If you want to, comment this line
+    # model_path_suffix = None # do not save models for each fold. If you want to, comment this line
     train_mlp(model, train_loader, val_loader, cfg, my_device, weights, model_path_suffix)
     send_discord_message(f"Training complete. Evaluating on {len(test_idxs)} samples")
 
@@ -665,7 +694,7 @@ def evaluate_mlp(X_feats, y, cfg, my_device, logger, log_dir, groups=None):
                 cfg,
                 my_device,
                 os.path.join(log_dir, f"Fold{str(fold_num)}.csv"),
-                # model_path_suffix=f"_F{fold_num}",
+                model_path_suffix=f"_F{fold_num}",
                 labels=labels,
                 encoder=le,
             )
@@ -891,7 +920,12 @@ def evaluate_saved_model(test_loader, cfg, my_device, log_dir):
     model.eval()
 
     y_test, y_test_pred, pid_test, probs = mlp_predict(model, test_loader, my_device, cfg)
-
+    X_features = extract_features(model, test_loader, my_device, cfg)
+    # Save extracted features in the dataset directory
+    dataset_dir = os.path.dirname(cfg.evaluation_data.X_path)
+    features_path = os.path.join(dataset_dir, f"extracted_features_resnet_SSL.npz")
+    np.savez(features_path, features=X_features, labels=y_test, pids=pid_test)
+    print(f"Extracted features saved to {features_path}")
     my_pids = np.unique(pid_test)
     results = []
     for current_pid in my_pids:
@@ -1426,7 +1460,7 @@ def train_and_evaluate_mlp(X_feats, y, cfg, my_device, logger, log_dir, groups=N
     log_path = os.path.join(log_dir, report_filename)
     classification_report(results, log_path)
 
-@hydra.main(config_path="conf", config_name="config_eva_mlp_cross")
+@hydra.main(config_path="conf", config_name="config_eva_pretrained")
 def main(cfg):
     """Evaluate hand-crafted vs deep-learned features"""
 
