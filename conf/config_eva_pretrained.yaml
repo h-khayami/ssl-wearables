@@ -4,7 +4,7 @@ defaults:
   - evaluation: all
   - model: resnet
   - dataloader: ten_sec
-  - evaluation_data:  realworld_wisdm #realworld_10s_5c #wisdm_10s_few_class ExtSens_10s #mymove_10s_5c_v2
+  - evaluation_data:  mymove_10s_5c_v2 #realworld_10s_5c #wisdm_10s_few_class ExtSens_10s #mymove_10s_5c_v2
   - cross_dataset_mapping: wisdm4c_mymove5c
 
 #experiment modes
@@ -26,7 +26,8 @@ trained_label_mapping_path: "${report_root}2025-04-01_16-54/label_mapping.json" 
 # trained_label_mapping_path: "${report_root}2025-02-18_19-32/label_mapping.json" #WISDM (4 classes)
 # model_path: /home/hossein/ssl-wearables/2025-03-08_05:22:16tmp.pt # trained on Extra Sensory
 # model_path: /home/hossein/ssl-wearables/2025-02-18_19:32:24tmp.pt # trained on WISDM (4 classes)
-model_path: /home/hossein/ssl-wearables/model_check_point/2025-04-08_10:30:51tmp.pt # trained on realworld_10s_5c (5 classes)
+# model_path: /home/hossein/ssl-wearables/model_check_point/2025-04-08_10:30:51tmp.pt # trained on realworld_10s_5c (5 classes)
+model_path: /home/hossein/ssl-wearables/model_check_point/2025-04-08_14:42:33tmp.pt
 # report_path: "${report_root}${data.dataset_name}_${evaluation.evaluation_name}_${data.subject_count}.csv"
 report_path: "${report_root}${data.dataset_name}_${evaluation.evaluation_name}_${data.subject_count}_${evaluation.subR}.csv"
 is_verbose: true

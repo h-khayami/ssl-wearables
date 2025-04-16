@@ -114,9 +114,10 @@ def read_dataset(cfg):
     # Load the data
     X = np.load(cfg.evaluation_data.X_path)
     Y = np.load(cfg.evaluation_data.Y_path, allow_pickle=True)
+    P = np.load(cfg.evaluation_data.PID_path, allow_pickle=True)
     dataset_name = cfg.evaluation_data.dataset_name
 
-    return X, Y, dataset_name
+    return X, Y, P, dataset_name
 
 def read_features(cfg):
     """
@@ -140,6 +141,32 @@ def read_features(cfg):
         print(f"Loading features from {feature_path}")
         with np.load(feature_path) as data:
             features = data['features']
+        return features
+    else:
+        print("No precomputed feature file found.")
+        return None
+def read_logits(cfg):
+    """
+    Reads logits from a precomputed file if it exists, otherwise returns None.
+
+    Parameters:
+        cfg: Configuration object containing the path to the logits file.
+
+    Returns:
+        numpy.ndarray or None: Loaded logits if the file exists, otherwise None.
+    """
+    # Extract the directory of the X_path
+    feature_dir = os.path.dirname(cfg.evaluation_data.X_path)
+
+    # Look for a file matching the pattern "extracted_logits*.npz"
+    logit_file = [f for f in os.listdir(feature_dir) if f.startswith("personalized_logits") and f.endswith(".npz")]
+
+    if logit_file:
+        # Load the first matching feature file
+        feature_path = os.path.join(feature_dir, logit_file[-1])
+        print(f"Loading features from {feature_path}")
+        with np.load(feature_path) as data:
+            features = data['logits']
         return features
     else:
         print("No precomputed feature file found.")
@@ -195,6 +222,89 @@ def plot_tsne_2d(x, y=None, title="t-SNE Visualization", random_state=42, save_p
     else:
         plt.show()
 
+def plot_tsne_multi_modes(X, features,logits,P, Y=None, dataset_name="Dataset", random_state=42, save_path=None):
+    """
+    Plots t-SNE visualizations for raw input and extracted features side by side if both exist.
+
+    Parameters:
+        X (numpy.ndarray): Raw input data.
+        features (numpy.ndarray or None): Extracted features.
+        Y (numpy.ndarray, optional): Labels for coloring the points. Default is None.
+        dataset_name (str, optional): Name of the dataset. Default is "Dataset".
+        random_state (int, optional): Random state for reproducibility. Default is 42.
+        save_path (str, optional): Path to save the plot. If None, the plot is displayed. Default is None.
+
+    Returns:
+        None
+    """
+    # Map string labels to numbers if y is provided
+    label_encoder = None
+    if Y is not None and isinstance(Y[0], str):
+        label_encoder = LabelEncoder()
+        Y = label_encoder.fit_transform(Y)
+        unique_classes = np.unique(Y)
+    if P is not None:
+        participants = np.unique(P)
+        print(f"Unique participants: {participants}")
+    fig, axes = plt.subplots(1, 3 if features is not None else 1, figsize=(20, 6))
+
+    if features is not None:
+        # Plot t-SNE for raw input
+        tsne_raw = TSNE(n_components=2, random_state=random_state)
+        X_embedded = tsne_raw.fit_transform(X)
+        axes[0].scatter(X_embedded[:, 0], X_embedded[:, 1], c=Y, cmap=plt.cm.get_cmap('viridis', len(np.unique(Y))), s=30)
+        axes[0].set_title(f"Raw Input ({dataset_name})")
+        axes[0].set_xticks([])
+        axes[0].set_yticks([])
+        # axes[0].set_aspect('equal') 
+        # axes[0].set_xlabel("t-SNE Dimension 1")
+        # axes[0].set_ylabel("t-SNE Dimension 2")
+
+        # Plot t-SNE for extracted features
+        tsne_features = TSNE(n_components=2, random_state=random_state)
+        features_embedded = tsne_features.fit_transform(features)
+        scatter = axes[1].scatter(features_embedded[:, 0], features_embedded[:, 1], c=Y, cmap=plt.cm.get_cmap('viridis', len(np.unique(Y))), s=30)
+        axes[1].set_title(f"Extracted Features ({dataset_name})")
+        axes[1].set_xticks([])
+        axes[1].set_yticks([])
+        # axes[1].set_aspect('equal') 
+
+        if logits is not None:
+            # Plot t-SNE for logits
+            tsne_logits = TSNE(n_components=2, random_state=random_state)
+            logits_embedded = tsne_logits.fit_transform(logits)
+            axes[2].scatter(logits_embedded[:, 0], logits_embedded[:, 1], c=Y, cmap=plt.cm.get_cmap('viridis', len(np.unique(Y))), s=30)
+            axes[2].set_title(f"Logits ({dataset_name})")
+            axes[2].set_xticks([])
+            axes[2].set_yticks([])
+            # axes[2].set_aspect('equal') 
+        # axes[1].set_xlabel("t-SNE Dimension 1")
+        # axes[1].set_ylabel("t-SNE Dimension 2")
+
+        # # Add a colorbar to the second plot
+        # cbar = fig.colorbar(scatter, ax=axes[2], ticks=np.unique(Y))
+        # cbar.set_label('Class Labels')
+        # if label_encoder is not None:
+        #     cbar.set_ticklabels(label_encoder.inverse_transform(unique_classes))
+        # else:
+        #     cbar.set_ticklabels(unique_classes)
+    else:
+        # Plot t-SNE for raw input only
+        tsne_raw = TSNE(n_components=2, random_state=random_state)
+        X_embedded = tsne_raw.fit_transform(X)
+        axes.scatter(X_embedded[:, 0], X_embedded[:, 1], c=Y, cmap=plt.cm.get_cmap('viridis', len(np.unique(Y))), s=30)
+        axes.set_title(f"Raw Input ({dataset_name})")
+        # axes.set_xlabel("t-SNE Dimension 1")
+        # axes.set_ylabel("t-SNE Dimension 2")
+
+    # Save or show the plot
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path)
+        print(f"Plot saved to {save_path}")
+    else:
+        plt.show()
+
 def initialize_model_and_extract_features(model, weight_path, input_data):
     """
     Initialize a model, load its weights, and use it to extract features using the feature_extractor module.
@@ -225,23 +335,24 @@ def initialize_model_and_extract_features(model, weight_path, input_data):
 
 @hydra.main(config_path="conf", config_name="config_eva_pretrained")
 def main(cfg):
+
     # Detect the available device (GPU or CPU)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+    USE_FEATURE = True
     # Initialize the model using the init_model function
     # model = init_model(cfg, device)
     # Read dataset from YAML
-    X, Y, dataset_name = read_dataset(cfg)
-    USE_FEATURE = True
+    X, Y, P, dataset_name = read_dataset(cfg)
+    print(f"X shape: {X.shape}, Y shape: {Y.shape}, dataset_name: {dataset_name}")
     
-    if USE_FEATURE:  
-        # Read precomputed features
-        features = read_features(cfg)
-        print(f"features shape: {features.shape}")
-        if features is None:
-            # If no precomputed features are found, initialize the model and extract features
-            print("No precomputed features found. Initializing model and extracting features...")
-
+    features = read_features(cfg)
+    logits = read_logits(cfg)
+    print(f"logits shape: {logits.shape}")
+    print(f"features shape: {features.shape}")
+    if features is None:
+        # If no precomputed features are found, initialize the model and extract features
+        print("No precomputed features found. Initializing model and extracting features...")
+    
         # features = initialize_model_and_extract_features(cfg, device,  "/home/hossein/ssl-wearables/model_check_point/2025-04-15_00:30:31tmp.pt", X)
         # model = init_model(cfg, device)
         # print(f"Model loading...")
@@ -253,23 +364,25 @@ def main(cfg):
     title = f"t-SNE Visualization of {dataset_name} dataset"
 
     # Update the save path to include the dataset name
-    if USE_FEATURE:
-        # model_name = cfg.model.name.split("_")[0]
-        save_path = f"/home/hossein/ssl-wearables/plots/imgs/tsne_plots_{dataset_name}_features.png"
-    else:
-        save_path = f"/home/hossein/ssl-wearables/plots/imgs/tsne_plots_{dataset_name}.png"
+    # if USE_FEATURE:
+    #     # model_name = cfg.model.name.split("_")[0]
+    #     save_path = f"/home/hossein/ssl-wearables/plots/imgs/tsne_plots_{dataset_name}_features.png"
+    # else:
+    #     save_path = f"/home/hossein/ssl-wearables/plots/imgs/tsne_plots_{dataset_name}.png"
+    save_path = f"/home/hossein/ssl-wearables/plots/imgs/tsne_plots_{dataset_name}_raw_features_logits.png"
     print(f"save_path: {save_path}")
     # Plot t-SNE visualization and save it
-    if USE_FEATURE:
-        X = features
-        print(f"Features shape: {X.shape}")
-    else:
-        X = X.reshape(X.shape[0], -1)
-        print(f"X shape: {X.shape}")
-    # # Flatten the last two dimensions of X if it has 3 dimensions
     if X.ndim == 3:
-        X = X.reshape(X.shape[0], -1)  # Shape becomes (num_samples, 300*3)
-        print(f"X/features reshaped to: {X.shape}")
-    plot_tsne_2d(X, y=Y, title=title, random_state=42, save_path=save_path)
+        X = X.reshape(X.shape[0], -1)
+        print(f"X reshaped to: {X.shape}")
+    # # Flatten the last two dimensions of X if it has 3 dimensions
+    if features.ndim == 3:
+        features = features.reshape(features.shape[0], -1)  # Shape becomes (num_samples, 300*3)
+        print(f"features reshaped to: {features.shape}")
+    if logits.ndim == 3:
+        logits = logits.reshape(logits.shape[0], -1)
+        print(f"logits reshaped to: {logits.shape}")
+    # plot_tsne_2d(X, y=Y, title=title, random_state=42, save_path=save_path)
+    plot_tsne_multi_modes(X, features, logits, P, Y=Y, dataset_name=dataset_name, random_state=42, save_path=save_path)
 if __name__ == "__main__":
     main()

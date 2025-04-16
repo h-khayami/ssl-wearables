@@ -424,6 +424,7 @@ def extract_features(model, data_loader, my_device, cfg):
         numpy.ndarray: Extracted features (feat_X).
     """
     feat_list = []
+    logit_list = []
     model.eval()
     for i, (my_X, _, _) in enumerate(data_loader):  # Ignore labels and PIDs
         with torch.no_grad():
@@ -434,11 +435,14 @@ def extract_features(model, data_loader, my_device, cfg):
                 features = model.module.feature_extractor(my_X)
             else:
                 features = model.feature_extractor(my_X)
+            logit = model(my_X)
+            logit_list.append(logit.cpu())  # Store logits on CPU
             feat_list.append(features.cpu())  # Store features on CPU
 
     # Concatenate all features into a single array
     feat_X = torch.cat(feat_list).numpy()
-    return feat_X
+    logit_X = torch.cat(logit_list).numpy()  # Concatenate logits
+    return feat_X, logit_X
 
 def init_model(cfg, my_device):
     if cfg.model.is_ae:
@@ -914,18 +918,27 @@ def train_and_save_model(train_loader, val_loader, cfg, my_device, weights):
     train_mlp(model, train_loader, val_loader, cfg, my_device, weights)
     # torch.save(model.state_dict(), model_path)
     # return model_path
-def evaluate_saved_model(test_loader, cfg, my_device, log_dir):
+def evaluate_saved_model(test_loader, cfg, my_device, log_dir, model_path_suffix=None):
     model = init_model(cfg, my_device)
-    model.load_state_dict(torch.load(cfg.model_path))
+    if model_path_suffix is not None:
+        this_model_path = cfg.model_path.split(".")[0] + model_path_suffix + ".pt"
+    else:
+        this_model_path = cfg.model_path
+    print(f"Loading weights from {this_model_path}")
+    model.load_state_dict(torch.load(this_model_path))
     model.eval()
 
     y_test, y_test_pred, pid_test, probs = mlp_predict(model, test_loader, my_device, cfg)
-    X_features = extract_features(model, test_loader, my_device, cfg)
+    X_features, X_logits = extract_features(model, test_loader, my_device, cfg)
     # Save extracted features in the dataset directory
     dataset_dir = os.path.dirname(cfg.evaluation_data.X_path)
     features_path = os.path.join(dataset_dir, f"extracted_features_resnet_SSL.npz")
     np.savez(features_path, features=X_features, labels=y_test, pids=pid_test)
     print(f"Extracted features saved to {features_path}")
+    # Save logits in the dataset directory
+    logits_path = os.path.join(dataset_dir, f"extracted_logits_resnet_SSL.npz")
+    np.savez(logits_path, logits=X_logits, labels=y_test, pids=pid_test)
+    print(f"Extracted logits saved to {logits_path}")
     my_pids = np.unique(pid_test)
     results = []
     for current_pid in my_pids:
@@ -939,6 +952,55 @@ def evaluate_saved_model(test_loader, cfg, my_device, log_dir):
         results.append(result)
        
     return results
+
+def personalized_models_features(test_data, cfg, my_device, log_dir):
+    model = init_model(cfg, my_device)
+    X_test = test_data[0]
+    Y_test = test_data[1]
+    P_test = test_data[2]
+    
+    Y_test_mapped = map_labels(Y_test, cfg, log_dir, reference_method = False, ignore_cross_dataset_mapping = True)
+    my_pids = np.unique(P_test)
+    #init an empty array for logits and features
+    logits = np.zeros((len(P_test), int(cfg.data.output_size)))
+    # logits = np.zeros_like(X_logits)  
+    # logits = []
+    features = np.zeros((len(P_test),1024,1))
+    #find files with similar name at cfg.model_path that has the same prefix in their name
+    
+    for fold_index, current_pid in zip(range(1,len(my_pids)+1),my_pids):
+        pid_index = np.where(P_test == current_pid)[0]
+        Y_subject = Y_test_mapped[pid_index]
+        X_subject = X_test[pid_index]
+        P_subject = P_test[pid_index]
+        _, _, test_loader, _ = setup_data(
+            np.array([]), np.arange(len(X_subject)), X_subject, Y_subject, P_subject, cfg
+        )
+        model_path_suffix = f"_F{fold_index}"
+        if model_path_suffix is not None:
+            this_model_path = cfg.model_path.split(".")[0] + model_path_suffix + ".pt"
+        else:
+            this_model_path = cfg.model_path
+        print(f"Loading weights from {this_model_path}")
+        model.load_state_dict(torch.load(this_model_path))
+        model.eval()
+        
+        # Evaluate the saved model on dataset2
+        X_features, X_logits = extract_features(model, test_loader, my_device, cfg)
+        for idx, value in zip(pid_index, X_logits):
+            logits[idx] = value
+        # logits[pid_index] = X_logits
+        features[pid_index] = X_features
+    dataset_dir = os.path.dirname(cfg.evaluation_data.X_path)
+    features_path = os.path.join(dataset_dir, f"personalized_features_resnet_SSL.npz")
+    np.savez(features_path, features=features, labels=Y_test, pids=P_test)
+    print(f"Extracted features saved to {features_path}")
+    # Save logits in the dataset directory
+    logits_path = os.path.join(dataset_dir, f"personalized_logits_resnet_SSL.npz")
+    np.savez(logits_path, logits=logits, labels=Y_test, pids=P_test)
+    print(f"Extracted logits saved to {logits_path}")
+       
+
 
 def cross_dataset_evaluation(train_data, test_data, cfg, my_device, log_dir):
     # Load dataset1 (train_data)
@@ -1691,7 +1753,8 @@ def main(cfg):
             X_eval_downsampled = downsample_data(X_eval, cfg.evaluation.input_size)
             print("labels:", np.unique(Y_eval))
             test_data = (X_eval_downsampled, Y_eval, P_eval)
-            evaluate_pretrained_model(test_data, cfg, my_device, log_dir_r)
+            personalized_models_features(test_data, cfg, my_device, log_dir_r)
+            # evaluate_pretrained_model(test_data, cfg, my_device, log_dir_r)
            
 if __name__ == "__main__":
     main()
