@@ -8,7 +8,7 @@ defaults:
 #experiment modes
 cross_dataset: false #set it true when you want to start training on one dataset and evaluate on another dataset
 use_pretrained: false #set it to true when you want to use a pretrained model (either on the same dataset or another dataset)
-split_method: "random_kfold" # "k_shot" or "sequential" or "held_one_subject_out" or "random_kfold" or "k_shot_fixed" or "held_one_subject_out_k_shot"
+split_method: "held_one_subject_out" # "k_shot" or "sequential" or "held_one_subject_out" or "random_kfold" or "k_shot_fixed" or "held_one_subject_out_k_shot"
 k_shot: 50 # number of shots for k-shot learning
 train_ratio: 0.6 # ratio of training data in sequential split
 num_split: 5 # number of splits for random kfold split

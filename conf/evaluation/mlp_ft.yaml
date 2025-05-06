@@ -2,11 +2,8 @@ feat_hand_crafted: false
 feat_random_cnn: false
 rotation_net: false
 flip_net: false
-
 flip_net_mlp: false
 harnet_ft: false
-
-
 evaluation_name: mlp
 input_size: 300
 num_epoch: 50
@@ -17,6 +14,7 @@ flip_net_ft: true
 load_weights: true
 freeze_weight: false
 mlp_net: false
-# flip_net_path: /home/hossein/ssl-wearables/model_check_point/2025-04-14_22:45:26tmp.pt #MLP model trained on realworld_wisdm  (5 classes)
-flip_net_path: /home/hossein/ssl-wearables/model_check_point/2025-04-15_13:15:18tmp.pt #MLP model trained on realworld_wisdm  (5 classes)
+flip_net_path: /home/hossein/ssl-wearables/model_check_point/2025-05-02_09:40:41tmp.pt #MLP model trained on mymove (5 classes) LOSO
+# flip_net_path: /data/ssl_wearable/model/2025-04-14_22:45:26tmp.pt #MLP model trained on realworld_wisdm  (5 classes)
+# flip_net_path: /data/ssl_wearable/model/2025-04-15_13:15:18tmp.pt #MLP model trained on realworld_wisdm  (5 classes) then fine tuned on MyMove LOSO
 

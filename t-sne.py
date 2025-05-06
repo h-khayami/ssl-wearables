@@ -8,6 +8,8 @@ import torch
 import torch.nn as nn
 from sslearning.models.accNet import cnn1, SSLNET, Resnet, EncoderMLP
 import hydra
+from matplotlib.colors import Normalize
+
 
 def init_model(cfg, my_device):
     if cfg.model.resnet_version > 0:
@@ -222,7 +224,7 @@ def plot_tsne_2d(x, y=None, title="t-SNE Visualization", random_state=42, save_p
     else:
         plt.show()
 
-def plot_tsne_multi_modes(X, features,logits,P, Y=None, dataset_name="Dataset", random_state=42, save_path=None):
+def plot_tsne_multi_modes1(X, features,logits,P, Y=None, dataset_name="Dataset", random_state=42, save_path=None):
     """
     Plots t-SNE visualizations for raw input and extracted features side by side if both exist.
 
@@ -243,64 +245,225 @@ def plot_tsne_multi_modes(X, features,logits,P, Y=None, dataset_name="Dataset", 
         label_encoder = LabelEncoder()
         Y = label_encoder.fit_transform(Y)
         unique_classes = np.unique(Y)
+        # Create a colormap and normalization object
+    cmap = plt.cm.get_cmap('viridis', len(unique_classes))
+    norm = Normalize(vmin=min(unique_classes), vmax=max(unique_classes))
     if P is not None:
         participants = np.unique(P)
         print(f"Unique participants: {participants}")
-    fig, axes = plt.subplots(1, 3 if features is not None else 1, figsize=(20, 6))
-
-    if features is not None:
+    fig, axes = plt.subplots(len(participants), 3 if features is not None else 1, figsize=(20, 6*len(participants)))
+    for index,participant in enumerate(participants):
+        # axes[index].set_title(f"Participant {participant}")
+        axes[index][0].set_title(f"Raw Input ({dataset_name})")
+        axes[index][1].set_title(f"Extracted Features ({dataset_name})")
+        axes[index][2].set_title(f"Logits ({dataset_name})")
+        # Filter data for the current participant
+        X_participant = X[P == participant]
+        Y_participant = Y[P == participant]
+        features_participant = features[P == participant] if features is not None else None
+        logits_participant = logits[P == participant] if logits is not None else None
         # Plot t-SNE for raw input
         tsne_raw = TSNE(n_components=2, random_state=random_state)
-        X_embedded = tsne_raw.fit_transform(X)
-        axes[0].scatter(X_embedded[:, 0], X_embedded[:, 1], c=Y, cmap=plt.cm.get_cmap('viridis', len(np.unique(Y))), s=30)
-        axes[0].set_title(f"Raw Input ({dataset_name})")
-        axes[0].set_xticks([])
-        axes[0].set_yticks([])
-        # axes[0].set_aspect('equal') 
-        # axes[0].set_xlabel("t-SNE Dimension 1")
-        # axes[0].set_ylabel("t-SNE Dimension 2")
-
+        X_embedded = tsne_raw.fit_transform(X_participant)
+        axes[index][0].scatter(X_embedded[:, 0], X_embedded[:, 1], c=Y_participant, cmap=cmap, norm=norm, s=30)
+        axes[index][0].set_xticks([])
+        axes[index][0].set_yticks([])
+        
         # Plot t-SNE for extracted features
-        tsne_features = TSNE(n_components=2, random_state=random_state)
-        features_embedded = tsne_features.fit_transform(features)
-        scatter = axes[1].scatter(features_embedded[:, 0], features_embedded[:, 1], c=Y, cmap=plt.cm.get_cmap('viridis', len(np.unique(Y))), s=30)
-        axes[1].set_title(f"Extracted Features ({dataset_name})")
-        axes[1].set_xticks([])
-        axes[1].set_yticks([])
-        # axes[1].set_aspect('equal') 
-
-        if logits is not None:
+        if features_participant is not None:
+            tsne_features = TSNE(n_components=2, random_state=random_state)
+            features_embedded = tsne_features.fit_transform(features_participant)
+            scatter = axes[index][1].scatter(features_embedded[:, 0], features_embedded[:, 1], c=Y_participant, cmap=cmap, norm=norm, s=30)
+            axes[index][1].set_xticks([])
+            axes[index][1].set_yticks([])
+        
+        if logits_participant is not None:
             # Plot t-SNE for logits
             tsne_logits = TSNE(n_components=2, random_state=random_state)
-            logits_embedded = tsne_logits.fit_transform(logits)
-            axes[2].scatter(logits_embedded[:, 0], logits_embedded[:, 1], c=Y, cmap=plt.cm.get_cmap('viridis', len(np.unique(Y))), s=30)
-            axes[2].set_title(f"Logits ({dataset_name})")
-            axes[2].set_xticks([])
-            axes[2].set_yticks([])
-            # axes[2].set_aspect('equal') 
-        # axes[1].set_xlabel("t-SNE Dimension 1")
-        # axes[1].set_ylabel("t-SNE Dimension 2")
-
-        # # Add a colorbar to the second plot
-        # cbar = fig.colorbar(scatter, ax=axes[2], ticks=np.unique(Y))
+            logits_embedded = tsne_logits.fit_transform(logits_participant)
+            axes[index][2].scatter(logits_embedded[:, 0], logits_embedded[:, 1], c=Y_participant, cmap=cmap, norm=norm, s=30)
+            axes[index][2].set_xticks([])
+            axes[index][2].set_yticks([])
+        # Add a colorbar to the second plot
+        # cbar = fig.colorbar(scatter, ax=axes[index][2], ticks=unique_classes)
         # cbar.set_label('Class Labels')
         # if label_encoder is not None:
         #     cbar.set_ticklabels(label_encoder.inverse_transform(unique_classes))
         # else:
         #     cbar.set_ticklabels(unique_classes)
-    else:
-        # Plot t-SNE for raw input only
-        tsne_raw = TSNE(n_components=2, random_state=random_state)
-        X_embedded = tsne_raw.fit_transform(X)
-        axes.scatter(X_embedded[:, 0], X_embedded[:, 1], c=Y, cmap=plt.cm.get_cmap('viridis', len(np.unique(Y))), s=30)
-        axes.set_title(f"Raw Input ({dataset_name})")
-        # axes.set_xlabel("t-SNE Dimension 1")
-        # axes.set_ylabel("t-SNE Dimension 2")
+# Create a single legend for all subplots
+    handles, labels = scatter.legend_elements()  # Get legend elements from the scatter plot
+    print(handles, labels)
+    fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, -0.05), ncol=5, title="Activities")
+    plt.subplots_adjust(bottom=0.2)
+    # if features is not None:
+    #     # Plot t-SNE for raw input
+    #     tsne_raw = TSNE(n_components=2, random_state=random_state)
+    #     X_embedded = tsne_raw.fit_transform(X)
+    #     axes[0].scatter(X_embedded[:, 0], X_embedded[:, 1], c=Y, cmap=plt.cm.get_cmap('viridis', len(np.unique(Y))), s=30)
+    #     axes[0].set_title(f"Raw Input ({dataset_name})")
+    #     axes[0].set_xticks([])
+    #     axes[0].set_yticks([])
+    #     # axes[0].set_aspect('equal') 
+    #     # axes[0].set_xlabel("t-SNE Dimension 1")
+    #     # axes[0].set_ylabel("t-SNE Dimension 2")
+
+    #     # Plot t-SNE for extracted features
+    #     tsne_features = TSNE(n_components=2, random_state=random_state)
+    #     features_embedded = tsne_features.fit_transform(features)
+    #     scatter = axes[1].scatter(features_embedded[:, 0], features_embedded[:, 1], c=Y, cmap=plt.cm.get_cmap('viridis', len(np.unique(Y))), s=30)
+    #     axes[1].set_title(f"Extracted Features ({dataset_name})")
+    #     axes[1].set_xticks([])
+    #     axes[1].set_yticks([])
+    #     # axes[1].set_aspect('equal') 
+
+    #     if logits is not None:
+    #         # Plot t-SNE for logits
+    #         tsne_logits = TSNE(n_components=2, random_state=random_state)
+    #         logits_embedded = tsne_logits.fit_transform(logits)
+    #         axes[2].scatter(logits_embedded[:, 0], logits_embedded[:, 1], c=Y, cmap=plt.cm.get_cmap('viridis', len(np.unique(Y))), s=30)
+    #         axes[2].set_title(f"Logits ({dataset_name})")
+    #         axes[2].set_xticks([])
+    #         axes[2].set_yticks([])
+    #         # axes[2].set_aspect('equal') 
+    #     # axes[1].set_xlabel("t-SNE Dimension 1")
+    #     # axes[1].set_ylabel("t-SNE Dimension 2")
+
+    #     # # Add a colorbar to the second plot
+    #     # cbar = fig.colorbar(scatter, ax=axes[2], ticks=np.unique(Y))
+    #     # cbar.set_label('Class Labels')
+    #     # if label_encoder is not None:
+    #     #     cbar.set_ticklabels(label_encoder.inverse_transform(unique_classes))
+    #     # else:
+    #     #     cbar.set_ticklabels(unique_classes)
+    # else:
+    #     # Plot t-SNE for raw input only
+    #     tsne_raw = TSNE(n_components=2, random_state=random_state)
+    #     X_embedded = tsne_raw.fit_transform(X)
+    #     axes.scatter(X_embedded[:, 0], X_embedded[:, 1], c=Y, cmap=plt.cm.get_cmap('viridis', len(np.unique(Y))), s=30)
+    #     axes.set_title(f"Raw Input ({dataset_name})")
+    #     # axes.set_xlabel("t-SNE Dimension 1")
+    #     # axes.set_ylabel("t-SNE Dimension 2")
 
     # Save or show the plot
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path)
+        print(f"Plot saved to {save_path}")
+    else:
+        plt.show()
+
+
+def plot_tsne_multi_modes(X, features, logits, P, Y=None, dataset_name="Dataset", random_state=42, save_path=None):
+    """
+    Plots t-SNE visualizations for raw input, extracted features, and logits side by side for each participant.
+    Adds a common legend at the bottom of the figure.
+
+    Parameters:
+        X (numpy.ndarray): Raw input data.
+        features (numpy.ndarray or None): Extracted features.
+        logits (numpy.ndarray or None): Logits from the model.
+        P (numpy.ndarray): Participant identifiers for each sample.
+        Y (numpy.ndarray, optional): Labels for coloring the points. Default is None.
+        dataset_name (str, optional): Name of the dataset. Default is "Dataset".
+        random_state (int, optional): Random state for reproducibility. Default is 42.
+        save_path (str, optional): Path to save the plot. If None, the plot is displayed. Default is None.
+
+    Returns:
+        None
+    """
+    # Map string labels to numbers if y is provided
+    label_encoder = None
+    if Y is not None and isinstance(Y[0], str):
+        label_encoder = LabelEncoder()
+        Y = label_encoder.fit_transform(Y)
+        unique_classes = np.unique(Y)
+    # unique_classes = np.unique(Y) if Y is not None else []
+
+    cmap = plt.cm.get_cmap('viridis', len(unique_classes)) 
+    norm = Normalize(vmin=min(unique_classes), vmax=max(unique_classes)) 
+    label_names = label_encoder.inverse_transform(np.array(sorted(unique_classes)))
+    # Create custom legend handles and labels
+    handles = [plt.Rectangle((0, 0), width=10, height=4, color=cmap(norm(i))) for i in unique_classes]
+    labels_legend = [label_names[i] for i in range(len(unique_classes))]
+
+    participants = np.unique(P)
+    participants = sorted(participants, key=lambda x: int(x.split('_p')[-1]))
+    print(f"Unique participants: {participants}")
+    num_participants = len(participants)
+    num_cols = 3 if features is not None and logits is not None else (2 if features is not None or logits is not None else 1)
+    fig, axes = plt.subplots(num_participants, num_cols, figsize=(20, 6 * num_participants))
+    if num_participants == 1:
+        axes = [axes]  # Make sure axes is always a list of lists for consistent indexing
+
+    scatter_elements = []
+    label_names = []
+
+    for index, participant in enumerate(participants):
+        row_axes = axes[index]
+
+        # Filter data for the current participant
+        X_participant = X[P == participant]
+        Y_participant = Y[P == participant] if Y is not None else None
+        features_participant = features[P == participant] if features is not None else None
+        logits_participant = logits[P == participant] if logits is not None else None
+
+        # Plot t-SNE for raw input
+        tsne_raw = TSNE(n_components=2, random_state=random_state)
+        X_embedded = tsne_raw.fit_transform(X_participant)
+        scatter_raw = row_axes[0].scatter(X_embedded[:, 0], X_embedded[:, 1], c=Y_participant, cmap=cmap, norm=norm, s=30) if Y_participant is not None else row_axes[0].scatter(X_embedded[:, 0], X_embedded[:, 1], s=30)
+        row_axes[0].set_title(f"Raw Input (Participant {participant}, {dataset_name})")
+        row_axes[0].set_xticks([])
+        row_axes[0].set_yticks([])
+
+        col_idx = 1
+        # Plot t-SNE for extracted features
+        if features_participant is not None:
+            tsne_features = TSNE(n_components=2, random_state=random_state)
+            features_embedded = tsne_features.fit_transform(features_participant)
+            scatter_features = row_axes[col_idx].scatter(features_embedded[:, 0], features_embedded[:, 1], c=Y_participant, cmap=cmap, norm=norm, s=30) if Y_participant is not None else row_axes[col_idx].scatter(features_embedded[:, 0], features_embedded[:, 1], s=30)
+            row_axes[col_idx].set_title(f"Extracted Features (Participant {participant}, {dataset_name})")
+            row_axes[col_idx].set_xticks([])
+            row_axes[col_idx].set_yticks([])
+            col_idx += 1
+
+        # Plot t-SNE for logits
+        if logits_participant is not None:
+            tsne_logits = TSNE(n_components=2, random_state=random_state)
+            logits_embedded = tsne_logits.fit_transform(logits_participant)
+            scatter_logits = row_axes[col_idx].scatter(logits_embedded[:, 0], logits_embedded[:, 1], c=Y_participant, cmap=cmap, norm=norm, s=30) if Y_participant is not None else row_axes[col_idx].scatter(logits_embedded[:, 0], logits_embedded[:, 1], s=30)
+            row_axes[col_idx].set_title(f"Logits (Participant {participant}, {dataset_name})")
+            row_axes[col_idx].set_xticks([])
+            row_axes[col_idx].set_yticks([])
+        
+        # Collect scatter elements and labels from the 4th participant's P13 feature plot (if it exists)
+        if index == 4 and features_participant is not None and Y is not None:
+            scatter_elements, label_indices = scatter_features.legend_elements()
+            if label_encoder:
+                label_names = label_encoder.inverse_transform(np.array(sorted(unique_classes)))
+            else:
+                label_names = [f"Class {i}" for i in sorted(unique_classes)]
+    
+    # if scatter_elements.any() and label_names.any():
+    # legend = fig.legend(scatter_elements, label_names, loc="lower center", bbox_to_anchor=(0.5, 1 - (0.05 * num_participants)), ncol=len(unique_classes) // 2 + 1, fontsize='large', title="Activities")
+    # legend.get_title().set_fontsize('large')
+    # plt.subplots_adjust(bottom=0.0)
+    # else:
+    #     plt.tight_layout()
+        # Try adding the legend to the axes
+    legend = row_axes[1].legend(handles, labels_legend, loc="lower center", 
+                                bbox_to_anchor=(0.5, -0.25), ncol=len(unique_classes) // 2 + 1, fontsize='x-large', title="Activities")
+    legend.get_title().set_fontsize('x-large')
+    # Adjust spacing between legend items
+    plt.rcParams['legend.handlelength'] = 5  # Length of the legend handles
+    plt.rcParams['legend.handleheight'] = 5  # Height of the legend handles
+    plt.rcParams['legend.labelspacing'] = 3  # Spacing between legend labels
+    # Adjust layout to make space for the legend
+    plt.subplots_adjust(bottom=0.3)
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust for title if needed
+
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
         print(f"Plot saved to {save_path}")
     else:
         plt.show()

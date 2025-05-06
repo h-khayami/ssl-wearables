@@ -195,10 +195,10 @@ def evaluate_model(model, data_loader, my_device, loss_fn, cfg):
     return np.mean(losses), np.mean(acces)
 
 
-def get_class_weights(y):
+def get_class_weights(y,number_of_classes):
     # obtain inverse of frequency as weights for the loss function
     counter = collections.Counter(y)
-    for i in range(len(counter)):
+    for i in range(number_of_classes):
         if i not in counter.keys():
             counter[i] = 1
 
@@ -288,7 +288,7 @@ def setup_data(train_idxs, test_idxs, X_feats, Y, groups, cfg):
 
     weights = []
     if cfg.data.task_type == "classify" and Y_train is not None:
-        weights = get_class_weights(Y_train)
+        weights = get_class_weights(Y_train,cfg.data.output_size)
     return train_loader, val_loader, test_loader, weights
 
 
@@ -304,11 +304,11 @@ class RMSELoss(nn.Module):
         return self.mse(yhat, y)
 
 
-def train_mlp(model, train_loader, val_loader, cfg, my_device, weights, model_path_suffix = None):
+def train_mlp(model, train_loader, val_loader, cfg, my_device, weights, model_path_suffix=None):
     optimizer = optim.Adam(
         model.parameters(), lr=cfg.evaluation.learning_rate, amsgrad=True
     )
-
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
     if cfg.data.task_type == "classify":
         if cfg.data.weighted_loss_fn:
             weights = torch.FloatTensor(weights).to(my_device)
@@ -317,13 +317,18 @@ def train_mlp(model, train_loader, val_loader, cfg, my_device, weights, model_pa
             loss_fn = nn.CrossEntropyLoss()
     else:
         loss_fn = RMSELoss()
+        
     if model_path_suffix is not None:
         this_model_path = cfg.model_path.split(".")[0] + model_path_suffix + ".pt"
     else:
         this_model_path = cfg.model_path
-    early_stopping = EarlyStopping(
-        patience=cfg.evaluation.patience, path=this_model_path, verbose=True, delta=0.00001
-    )
+        
+    # Only initialize early stopping if enabled
+    if cfg.evaluation.use_early_stopping:
+        early_stopping = EarlyStopping(
+            patience=cfg.evaluation.patience, path=this_model_path, verbose=True, delta=0.00001
+        )
+    
     logs = {'train_loss': [], 'val_loss': [], 'train_acc': [], 'val_acc': []}
 
     for epoch in range(cfg.evaluation.num_epoch):
@@ -343,36 +348,64 @@ def train_mlp(model, train_loader, val_loader, cfg, my_device, weights, model_pa
             loss.backward()
             optimizer.step()
 
-            
-
             pred_y = torch.argmax(logits, dim=1)
             train_acc = torch.sum(pred_y == true_y)
             train_acc = train_acc / (pred_y.size()[0])
 
             train_losses.append(loss.cpu().detach().numpy())
             train_acces.append(train_acc.cpu().detach().numpy())
-        val_loss, val_acc = evaluate_model(
-            model, val_loader, my_device, loss_fn, cfg
-        )
+            
+        val_loss, val_acc = evaluate_model(model, val_loader, my_device, loss_fn, cfg)
         logs['train_loss'].append(np.mean(train_losses))
         logs['train_acc'].append(np.mean(train_acces))
         logs['val_loss'].append(val_loss)
         logs['val_acc'].append(val_acc)
+        
         epoch_len = len(str(cfg.evaluation.num_epoch))
         print_msg = (
             f"[{epoch:>{epoch_len}}/{cfg.evaluation.num_epoch:>{epoch_len}}] "
             + f"train_loss: {np.mean(train_losses):.5f} "
             + f"valid_loss: {val_loss:.5f}"
         )
-        early_stopping(val_loss, model)
         print(print_msg)
+        # Update the learning rate
+        scheduler.step()  
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"Learning Rate: {current_lr}")
+        # Only use early stopping if enabled
+        if cfg.evaluation.use_early_stopping:
+            early_stopping(val_loss, model)
+            if early_stopping.early_stop:
+                print("Early stopping")
+                break
+        else:
+            # Save the model at the end of each epoch when early stopping is disabled
+            # This way we still have the latest model saved
+            torch.save(model.state_dict(), this_model_path)
+    
+    log_file_path = f"{cfg.logging_path}/train_log.npz"
 
-        if early_stopping.early_stop:
-            print("Early stopping")
-            break
-    np.savez(f"{cfg.logging_path}/train_log.npz", **logs)
+    # Initialize or load the logs
+    if os.path.exists(log_file_path):
+        # Load existing logs
+        existing_logs = np.load(log_file_path, allow_pickle=True)
+        all_logs = {key: existing_logs[key].item() for key in existing_logs.keys()}
+    else:
+        # Initialize logs if the file doesn't exist
+        all_logs = {}
+
+    # Create a new entry for the current fold (e.g., 'F1', 'F2', etc.)
+    fold_key = model_path_suffix if model_path_suffix is not None else "F1"
+    all_logs[fold_key] = {
+        'train_loss': logs['train_loss'],
+        'train_acc': logs['train_acc'],
+        'val_loss': logs['val_loss'],
+        'val_acc': logs['val_acc']
+    }
+
+    # Save the updated logs back to the file
+    np.savez(log_file_path, **{key: np.array(value, dtype=object) for key, value in all_logs.items()})
     return model
-
 
 def mlp_predict(model, data_loader, my_device, cfg):
     predictions_list = []
@@ -1381,7 +1414,7 @@ def setup_data_no_val(train_idxs, test_idxs, X_feats, Y, groups, cfg):
 
     weights = []
     if cfg.data.task_type == "classify" and Y_train is not None:
-        weights = get_class_weights(Y_train)
+        weights = get_class_weights(Y_train, cfg.data.output_size)
     return train_loader, val_loader, test_loader, weights
 
 def train_model(model, train_loader, test_loader, cfg, my_device, weights, model_path_suffix = None):
@@ -1522,7 +1555,7 @@ def train_and_evaluate_mlp(X_feats, y, cfg, my_device, logger, log_dir, groups=N
     log_path = os.path.join(log_dir, report_filename)
     classification_report(results, log_path)
 
-@hydra.main(config_path="conf", config_name="config_eva_pretrained")
+@hydra.main(config_path="conf", config_name="config_eva_ft_person")
 def main(cfg):
     """Evaluate hand-crafted vs deep-learned features"""
 
@@ -1532,8 +1565,10 @@ def main(cfg):
     dt_string = now.strftime("%Y-%m-%d_%H:%M:%S")
     log_dir = os.path.join(
         get_original_cwd(),
+        "data", "logs",
         cfg.evaluation.evaluation_name + "_" + dt_string + ".log",
     )
+    os.makedirs(os.path.dirname(log_dir), exist_ok=True)  # Make sure the directory exists
     dtm_string = now.strftime("%Y-%m-%d_%H-%M")
     # log_dir_r = os.path.join(cfg.report_root, dtm_string)
     # os.makedirs(log_dir_r, exist_ok=True)
@@ -1541,7 +1576,7 @@ def main(cfg):
     log_dir_r.mkdir(parents=True, exist_ok=True)
     cfg.logging_path = log_dir_r
     if cfg.use_pretrained == False:
-        cfg.model_path = os.path.join(get_original_cwd(),"model_check_point", dt_string + "tmp.pt")
+        cfg.model_path = os.path.join("/data/ssl_wearable/model", dt_string + "tmp.pt")
     fh = logging.FileHandler(log_dir)
     fh.setLevel(logging.INFO)
     logger.addHandler(fh)
@@ -1753,8 +1788,8 @@ def main(cfg):
             X_eval_downsampled = downsample_data(X_eval, cfg.evaluation.input_size)
             print("labels:", np.unique(Y_eval))
             test_data = (X_eval_downsampled, Y_eval, P_eval)
-            personalized_models_features(test_data, cfg, my_device, log_dir_r)
-            # evaluate_pretrained_model(test_data, cfg, my_device, log_dir_r)
+            # personalized_models_features(test_data, cfg, my_device, log_dir_r)
+            evaluate_pretrained_model(test_data, cfg, my_device, log_dir_r)
            
 if __name__ == "__main__":
     main()

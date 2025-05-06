@@ -27,7 +27,8 @@ trained_label_mapping_path: "${report_root}2025-04-08_14-42/label_mapping.json" 
 # model path to be used only if use_pretrained is set to true
 # model_path: /home/hossein/ssl-wearables/2025-03-08_05:22:16tmp.pt # trained on Extra Sensory
 # model_path: /home/hossein/ssl-wearables/2025-02-18_19:32:24tmp.pt # trained on WISDM (4 classes)
-model_path: /home/hossein/ssl-wearables/2025-04-08_10:30:51tmp.pt # trained on realworld_wisdm (frozen representation) (5 classes)
+# model_path: /home/hossein/ssl-wearables/2025-04-08_10:30:51tmp.pt # trained on realworld_wisdm (frozen representation) (5 classes)
+model_path: /home/hossein/ssl-wearables/model_check_point/2025-04-08_10:30:51tmp.pt # trained on realworld_wisdm (frozen representation) (5 classes)
 # model_path: /home/hossein/ssl-wearables/2025-04-08_14:42:33tmp.pt # trained on realworld_wisdm (frozen representation) (5 classes) fine tuned on MyMove LOSO
 # report_path: "${report_root}${data.dataset_name}_${evaluation.evaluation_name}_${data.subject_count}.csv"
 report_path: "${report_root}${data.dataset_name}_${evaluation.evaluation_name}_${data.subject_count}_${evaluation.subR}.csv"

@@ -10,10 +10,14 @@ flip_net: false
 flip_net_ft: true
 flip_net_random_mlp: false
 harnet_ft: false
+mlp_net: false
 load_weights: true
-freeze_weight: true
-flip_net_path: /home/hossein/ssl-wearables/2025-04-08_14:42:33tmp.pt #model trained on realworld_wisdm (frozen representation) (5 classes) fine tuned on MyMove LOSO
-# flip_net_path: /home/hossein/ssl-wearables/2025-04-08_10:30:51tmp.pt # trained on realworld_wisdm (frozen representation) (5 classes)
+freeze_weight: false
+# flip_net_path: /home/hossein/ssl-wearables/model_check_point/2025-04-08_14:42:33tmp.pt #model trained on realworld_wisdm (frozen representation) (5 classes) fine tuned on MyMove LOSO
+flip_net_path: /home/hossein/ssl-wearables/model_check_point/2025-04-25_12:37:29tmp.pt # trained on realworld_wisdm  (frozen representation) (5 classes)fine tuned on MyMove LOSO (50 epochs, lr=0.001, early stopping 50)
+# flip_net_path: /home/hossein/ssl-wearables/model_check_point/2025-04-26_06:02:34tmp.pt #  (frozen representation) (5 classes)fine tuned on MyMove LOSO (50 epochs, lr=0.001, early stopping 50)
+# flip_net_path: /home/hossein/ssl-wearables/model_check_point/2025-04-24_22:28:58tmp.pt #  trained on realworld_wisdm (frozen representation) (5 classes)(50 epochs, lr=0.001, early stopping 50)
+
 # flip_net_path: /data/ssl_wearable/model/mtl_best.mdl #based SSL model
 input_size: 300  # input size after resampling the raw data
 subR: 1
@@ -21,8 +25,9 @@ subR: 1
 # hyper-parameters
 learning_rate: 0.0001
 num_workers: 6
-patience: 5
-num_epoch: 50
+patience: 50
+num_epoch: 20
+use_early_stopping: false
 
 evaluation_name: all_100k
 

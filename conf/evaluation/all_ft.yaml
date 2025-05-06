@@ -10,17 +10,19 @@ flip_net: false
 flip_net_ft: true
 flip_net_random_mlp: false
 harnet_ft: false
+mlp_net: false
 load_weights: true
 freeze_weight: true
-flip_net_path: /home/hossein/ssl-wearables/2025-04-08_10:30:51tmp.pt #model trained on realworld_wisdm (frozen representation) (5 classes)
-#flip_net_path: /data/ssl_wearable/model/mtl_best.mdl #based SSL model
+# flip_net_path: /home/hossein/ssl-wearables/model_check_point/2025-04-08_10:30:51tmp.pt #model trained on realworld_wisdm (frozen representation) (5 classes) lr=0.001, early stopping 5
+# flip_net_path: /home/hossein/ssl-wearables/model_check_point/2025-04-24_22:28:58tmp.pt #model trained on realworld_wisdm (frozen representation) (5 classes) lr=0.001, early stopping 50
+flip_net_path: /data/ssl_wearable/model/mtl_best.mdl #based SSL model
 input_size: 300  # input size after resampling the raw data
 subR: 1
 
 # hyper-parameters
-learning_rate: 0.0001
+learning_rate: 0.001
 num_workers: 6
-patience: 5
+patience: 50
 num_epoch: 50
 
 evaluation_name: all_100k
