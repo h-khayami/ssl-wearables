@@ -4,6 +4,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 from typing import Union, List, Dict, Any, cast
 import torch.nn.functional as F
+import math
 
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
@@ -938,3 +939,196 @@ class EncoderMLP(nn.Module):
         feats = self.encoder(x)
         y = self.classifier(feats.view(x.shape[0], -1))
         return y
+
+        
+class IMUMLPClassifier(nn.Module):
+    def __init__(self, input_dim=300*3, embed_dim=64, num_classes=5):
+        super().__init__()
+        self.flatten = nn.Flatten()
+        self.embedding = nn.Linear(input_dim, embed_dim)
+        
+        self.hidden_dim = hidden_dim = embed_dim * 4
+        self.mlp = nn.Sequential(
+            nn.Linear(embed_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, embed_dim)
+        )
+        self.head = nn.Linear(embed_dim, num_classes)
+        
+    def forward(self, x):
+        x_embedding = self.embedding(self.flatten(x))
+        x_encoded = self.mlp(x_embedding)
+        output = self.head(x_encoded)
+        return output
+    
+class IMUTransformerClassifier(nn.Module):
+    def __init__(self, input_dim=3, embed_dim=128, seq_length=300, num_heads=4, num_layers=2, num_classes=5):
+        super().__init__()
+        self.embedding = nn.Linear(input_dim, embed_dim)
+        self.pos_embedding = nn.Embedding(seq_length, embed_dim)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=embed_dim, nhead=num_heads, 
+                                                   dim_feedforward=embed_dim*4)#, batch_first=True) not supported in Pytorch 1.7.0
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.head = nn.Linear(embed_dim, num_classes)
+        
+    def forward(self, x):
+        B, T, _ = x.shape
+        x = self.embedding(x)
+        pos = torch.arange(T, device=x.device).unsqueeze(0).expand(B, T)
+        x = x + self.pos_embedding(pos)
+        x = x.transpose(0, 1)  # Transpose to (T, B, embed_dim) comment this if using batch_first=True and PyTorch >= 1.9.0
+        x = self.transformer_encoder(x)
+        x = x.transpose(0, 1)  # Transpose back to (B, T, embed_dim) comment this if using batch_first=True and PyTorch >= 1.9.0
+        x = x.mean(dim=1)  # Global average pooling over time
+        out = self.head(x)
+        return out
+
+
+class DeepConvLSTM(nn.Module): # NOT TESTED YET
+    """Deep ConvLSTM model for time series classification.
+    Args:
+        input_channels (int): Number of input channels.
+        num_classes (int): Number of output classes.
+    """
+    def __init__(self, input_channels=3, num_classes=5):
+        super().__init__()
+        self.conv_layers = nn.Sequential(
+            nn.Conv1d(input_channels, 64, kernel_size=5, padding=2),
+            nn.ReLU(),
+            nn.Conv1d(64, 64, kernel_size=5, padding=2),
+            nn.ReLU(),
+            nn.Conv1d(64, 64, kernel_size=5, padding=2),
+            nn.ReLU(),
+            nn.Conv1d(64, 64, kernel_size=5, padding=2),
+            nn.ReLU(),
+        )
+        self.lstm = nn.LSTM(input_size=64, hidden_size=128, num_layers=2, batch_first=True)
+        self.dropout = nn.Dropout(0.5)
+        self.fc = nn.Linear(128, num_classes)
+    
+    def forward(self, x):
+        # x shape: [batch, channels, time]
+        x = self.conv_layers(x)
+        # Transpose for LSTM: [batch, time, features]
+        x = x.permute(0, 2, 1)
+        x, _ = self.lstm(x)
+        # Take final time step
+        x = x[:, -1, :]
+        x = self.dropout(x)
+        return self.fc(x)
+
+class AttnTCN(nn.Module): # NOT TESTED YET
+    """Attention-based Temporal Convolutional Network for time series classification.
+    Args:
+        input_channels (int): Number of input channels.
+        seq_length (int): Length of the input sequence.
+        num_classes (int): Number of output classes.
+    """
+    def __init__(self, input_channels=3, seq_length=300, num_classes=5):
+        super().__init__()
+        
+        # Temporal convolutions
+        self.tcn = nn.Sequential(
+            nn.Conv1d(input_channels, 64, kernel_size=5, stride=1, padding=2, dilation=1),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Conv1d(64, 64, kernel_size=5, stride=1, padding=4, dilation=2),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Conv1d(64, 128, kernel_size=5, stride=1, padding=8, dilation=4),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+        )
+        
+        # Self-attention layer
+        self.attention = nn.MultiheadAttention(embed_dim=128, num_heads=4)
+        self.layer_norm = nn.LayerNorm(128)
+        
+        # Classification head
+        self.dropout = nn.Dropout(0.5)
+        self.fc = nn.Linear(128, num_classes)
+    
+    def forward(self, x):
+        # x shape: [batch, channels, time]
+        batch_size = x.size(0)
+        
+        # Apply TCN
+        x = self.tcn(x)  # [batch, 128, time]
+        
+        # Prepare for self-attention (seq_len, batch, features)
+        x = x.permute(2, 0, 1)
+        
+        # Apply self-attention
+        attn_output, _ = self.attention(x, x, x)
+        x = x + attn_output  # Residual connection
+        x = self.layer_norm(x)
+        
+        # Global temporal pooling
+        x = x.permute(1, 0, 2)  # [batch, time, features]
+        x = torch.mean(x, dim=1)  # [batch, features]
+        
+        # Classification
+        x = self.dropout(x)
+        return self.fc(x)
+    
+class HARTransformer(nn.Module): # NOT TESTED YET
+    """Transformer model for Human Activity Recognition (HAR).
+    Args:
+        input_channels (int): Number of input channels.
+        seq_length (int): Length of the input sequence.
+        num_classes (int): Number of output classes.
+        d_model (int): Dimension of the model.
+    """
+    def __init__(self, input_channels=3, seq_length=300, num_classes=5, d_model=128):
+        super().__init__()
+        
+        # Initial embedding
+        self.embedding = nn.Sequential(
+            nn.Conv1d(input_channels, d_model, kernel_size=5, padding=2),
+            nn.ReLU()
+        )
+        
+        # Positional encoding
+        self.register_buffer('pos_encoding', self._create_pos_encoding(seq_length, d_model))
+        
+        # Transformer encoder
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, 
+            nhead=8, 
+            dim_feedforward=512,
+            dropout=0.1,
+            activation='gelu',
+            batch_first=True
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=4)
+        
+        # Classification head
+        self.classifier = nn.Linear(d_model, num_classes)
+    
+    def _create_pos_encoding(self, seq_length, d_model):
+        pos = torch.arange(seq_length).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * -(math.log(10000.0) / d_model))
+        pos_enc = torch.zeros(seq_length, d_model)
+        pos_enc[:, 0::2] = torch.sin(pos * div_term)
+        pos_enc[:, 1::2] = torch.cos(pos * div_term)
+        return pos_enc
+    
+    def forward(self, x):
+        # x shape: [batch, channels, time]
+        batch_size = x.size(0)
+        
+        # Initial embedding
+        x = self.embedding(x)  # [batch, d_model, time]
+        x = x.permute(0, 2, 1)  # [batch, time, d_model]
+        
+        # Add positional encoding
+        x = x + self.pos_encoding.unsqueeze(0)
+        
+        # Transformer
+        x = self.transformer(x)
+        
+        # Global pooling
+        x = torch.mean(x, dim=1)
+        
+        # Classification
+        return self.classifier(x)

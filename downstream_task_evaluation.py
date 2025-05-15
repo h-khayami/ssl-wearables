@@ -16,7 +16,7 @@ import pathlib
 import json
 
 # SSL net
-from sslearning.models.accNet import cnn1, SSLNET, Resnet, EncoderMLP
+from sslearning.models.accNet import cnn1, SSLNET, Resnet, EncoderMLP, IMUMLPClassifier, IMUTransformerClassifier
 from sslearning.scores import classification_scores, classification_report
 import copy
 from sklearn import preprocessing
@@ -47,48 +47,9 @@ is_dist=false gpu=0 model=resnet evaluation=mtl_1k_ft evaluation.task_name=aot
 """ 
 Model Definition
 """
-class IMUMLPClassifier(nn.Module):
-    def __init__(self, input_dim=300*3, embed_dim=64, num_classes=5):
-        super().__init__()
-        self.flatten = nn.Flatten()
-        self.embedding = nn.Linear(input_dim, embed_dim)
-        
-        self.hidden_dim = hidden_dim = embed_dim * 4
-        self.mlp = nn.Sequential(
-            nn.Linear(embed_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, embed_dim)
-        )
-        self.head = nn.Linear(embed_dim, num_classes)
-        
-    def forward(self, x):
-        x_embedding = self.embedding(self.flatten(x))
-        x_encoded = self.mlp(x_embedding)
-        output = self.head(x_encoded)
-        return output
+
     
-class IMUTransformerClassifier(nn.Module):
-    def __init__(self, input_dim=3, embed_dim=128, seq_length=300, num_heads=4, num_layers=2, num_classes=5):
-        super().__init__()
-        self.embedding = nn.Linear(input_dim, embed_dim)
-        self.pos_embedding = nn.Embedding(seq_length, embed_dim)
-        encoder_layer = nn.TransformerEncoderLayer(d_model=embed_dim, nhead=num_heads, 
-                                                   dim_feedforward=embed_dim*4)#, batch_first=True) not supported in Pytorch 1.7.0
-        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        self.head = nn.Linear(embed_dim, num_classes)
-        
-    def forward(self, x):
-        B, T, _ = x.shape
-        x = self.embedding(x)
-        pos = torch.arange(T, device=x.device).unsqueeze(0).expand(B, T)
-        x = x + self.pos_embedding(pos)
-        x = x.transpose(0, 1)  # Transpose to (T, B, embed_dim) comment this if using batch_first=True and PyTorch >= 1.9.0
-        x = self.transformer_encoder(x)
-        x = x.transpose(0, 1)  # Transpose back to (B, T, embed_dim) comment this if using batch_first=True and PyTorch >= 1.9.0
-        x = x.mean(dim=1)  # Global average pooling over time
-        out = self.head(x)
-        return out
-    
+
 def send_discord_message(message):
     # Load variables from .env file
     load_dotenv()
@@ -309,6 +270,7 @@ def train_mlp(model, train_loader, val_loader, cfg, my_device, weights, model_pa
         model.parameters(), lr=cfg.evaluation.learning_rate, amsgrad=True
     )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+    # scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9)
     if cfg.data.task_type == "classify":
         if cfg.data.weighted_loss_fn:
             weights = torch.FloatTensor(weights).to(my_device)
@@ -369,7 +331,7 @@ def train_mlp(model, train_loader, val_loader, cfg, my_device, weights, model_pa
         )
         print(print_msg)
         # Update the learning rate
-        scheduler.step()  
+        scheduler.step()  #uncomment this line if you want to use learning rate scheduler
         current_lr = optimizer.param_groups[0]['lr']
         print(f"Learning Rate: {current_lr}")
         # Only use early stopping if enabled
@@ -638,7 +600,10 @@ def train_test_mlp(
     labels=None,
     encoder=None,
 ):
-    model = setup_model(cfg, my_device, model_path_suffix) #let pick the model_path_suffix if you want to load the model with suffix
+    if cfg.evaluation.load_personalized_weights:
+        model = setup_model(cfg, my_device, model_path_suffix)#let pick the model_path_suffix if you want to load the model with suffix
+    else:
+        model = setup_model(cfg, my_device)
     if cfg.is_verbose:
         print(model)
         summary(model, (3, cfg.evaluation.input_size))
@@ -1421,6 +1386,8 @@ def train_model(model, train_loader, test_loader, cfg, my_device, weights, model
     optimizer = optim.Adam(
         model.parameters(), lr=cfg.evaluation.learning_rate, amsgrad=True
     )
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
+    # scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9)
     print(f"Using {cfg.evaluation.learning_rate} as learning rate")
     if cfg.data.task_type == "classify":
         if cfg.data.weighted_loss_fn:
@@ -1468,14 +1435,21 @@ def train_model(model, train_loader, test_loader, cfg, my_device, weights, model
         logs['test_loss'].append(test_loss)
         logs['test_acc'].append(test_acc)
         epoch_len = len(str(cfg.evaluation.num_epoch))
+        current_lr = optimizer.param_groups[0]['lr']
         print_msg = (
             f"[{epoch:>{epoch_len}}/{cfg.evaluation.num_epoch:>{epoch_len}}] "
             + f"Train Loss: {logs['train_loss'][-1]:.4f} "
             + f"Train Acc: {logs['train_acc'][-1]:.4f} "
             + f"Test Loss: {logs['test_loss'][-1]:.4f} "
             + f"Test Acc: {logs['test_acc'][-1]:.4f} "
+            + f"LR: {current_lr:.6f} "
         )
         print(print_msg)
+        scheduler.step()
+        # Save the model at epoch 5
+        if epoch + 1 == 5:
+            torch.save(model.state_dict(), this_model_path.split(".")[0]+"epoch_5.pt")
+            print("Model saved at epoch 5.")
 
 
     return model,logs
@@ -1485,16 +1459,22 @@ def train_and_evaluate(train_idxs, test_idxs, X_feats, y,  groups, cfg, my_devic
     # model.to(my_device)
     # optimizer = torch.optim.Adam(model.parameters(), lr=cfg.evaluation.learning_rate)
     # criterion = nn.CrossEntropyLoss()
-    model = setup_model(cfg, my_device, model_path_suffix)
+    if cfg.evaluation.load_personalized_weights:
+        model = setup_model(cfg, my_device, model_path_suffix)#let pick the model_path_suffix if you want to load the model with suffix
+    else:
+        model = setup_model(cfg, my_device)
     if cfg.is_verbose:
         print(model)
         summary(model, (3, cfg.evaluation.input_size))
     train_loader, val_loader, test_loader, weights = setup_data_no_val(train_idxs, test_idxs, X_feats, y, groups, cfg)
     model, logs = train_model(model, train_loader, val_loader, cfg, my_device, weights, model_path_suffix)
     # Save the model
-    if cfg.save_model:
-        torch.save(model.state_dict(), cfg.model_path)
-        send_discord_message(f"Model saved to {cfg.model_path}")
+    if model_path_suffix is not None:
+        this_model_path = cfg.model_path.split(".")[0] + model_path_suffix + ".pt"
+    else:
+        this_model_path = cfg.model_path
+    torch.save(model.state_dict(), this_model_path)
+    send_discord_message(f"Model saved to {this_model_path}")
     # Evaluate the model
     y_test, y_test_pred, pid_test, probs = mlp_predict(model, test_loader, my_device, cfg)
     send_discord_message(f"Model evaluation complete")
@@ -1540,7 +1520,8 @@ def train_and_evaluate_mlp(X_feats, y, cfg, my_device, logger, log_dir, groups=N
         # try:
         result,logs = train_and_evaluate(train_idxs, test_idxs, X_feats, y,  
                                              groups, cfg, my_device,  logger, 
-                                             os.path.join(log_dir, f"Fold{str(fold_num)}.csv"),  model_path_suffix=None)
+                                             os.path.join(log_dir, f"Fold{str(fold_num)}.csv"),  
+                                             model_path_suffix=f"_F{fold_num}")
 
         # except Exception as e:
         #     error_message = f"🚨 Error in training: {str(e)}"
@@ -1555,7 +1536,7 @@ def train_and_evaluate_mlp(X_feats, y, cfg, my_device, logger, log_dir, groups=N
     log_path = os.path.join(log_dir, report_filename)
     classification_report(results, log_path)
 
-@hydra.main(config_path="conf", config_name="config_eva_ft_person")
+@hydra.main(config_path="conf", config_name="config_eva_mlp_ft")
 def main(cfg):
     """Evaluate hand-crafted vs deep-learned features"""
 
@@ -1625,7 +1606,7 @@ def main(cfg):
     results = {}
 
     if cfg.use_pretrained == False:
-        if cfg.evaluation.mlp_net:
+        if cfg.validation == False:
             if cfg.cross_dataset:
                 task_message = """\n
                 ##############################################
