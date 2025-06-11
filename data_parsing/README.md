@@ -1,8 +1,8 @@
 ## Baseline pre-processing
 All the data are processed to have a unit of G. They will also be clipped to have values between ±3g. 
-The range and sampling frequencies of different datasets are 
-different. The clipping of values should only be done at the modeling stage. When doing pre-processing, we should 
-only extract the raw data. Not sure if this matters:
+The range and sampling frequencies of different datasets are different. 
+The clipping of values should only be done at the modeling stage. 
+When doing pre-processing, we should only extract the raw data. Not sure if this matters:
 
 We have included links to the processed datasets that are publicly available. One would however make a request to access
 data from the [UK-Biobank](https://www.ukbiobank.ac.uk), the [Rowlands](https://pubmed.ncbi.nlm.nih.gov/21088628/) dataset and the [MJFF-LR](https://www.synapse.org/#!Synapse:syn20681023/wiki/594678) dataset.

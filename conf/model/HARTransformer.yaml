@@ -1,0 +1,6 @@
+d_model: 128
+num_heads: 8
+num_layers: 4
+name: "HARTransformer_inp${evaluation.input_size}_head${model.num_heads}_dim${model.d_model}_out${data.output_size}"
+resnet_version: 0
+is_ae: false

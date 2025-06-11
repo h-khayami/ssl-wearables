@@ -1,15 +1,14 @@
 defaults:
   - _self_
-  - data: realworld_wisdm
-  - evaluation: all_ft_p
-  - model: resnet_transformer
+  - data: mymove_10s_5c_v2
+  - evaluation: transformer_ft
+  - model: transformer
   - dataloader: ten_sec
-  - evaluation_data: mymove_10s_5c_v2 #realworld_10s_5c #wisdm_10s_few_class #ExtSens_10s
 
 #experiment modes
-cross_dataset: true #set it true when you want to start training on one dataset and evaluate on another dataset
+cross_dataset: false #set it true when you want to start training on one dataset and evaluate on another dataset
 use_pretrained: false #set it to true when you want to use a pretrained model (either on the same dataset or another dataset)
-split_method: "random_kfold" # "k_shot" or "sequential" or "held_one_subject_out" or "random_kfold" or "k_shot_fixed" or "held_one_subject_out_k_shot"
+split_method: "held_one_subject_out" # "k_shot" or "sequential" or "held_one_subject_out" or "random_kfold" or "k_shot_fixed" or "held_one_subject_out_k_shot"
 k_shot: 50 # number of shots for k-shot learning
 train_ratio: 0.6 # ratio of training data in sequential split
 num_split: 5 # number of splits for random kfold split
@@ -34,4 +33,4 @@ model_path: ""
 # model_path: /home/hossein/ssl-wearables/2025-04-08_14:42:33tmp.pt # trained on realworld_wisdm (frozen representation) (5 classes) fine tuned on MyMove LOSO
 # report_path: "${report_root}${data.dataset_name}_${evaluation.evaluation_name}_${data.subject_count}.csv"
 report_path: "${report_root}${data.dataset_name}_${evaluation.evaluation_name}_${data.subject_count}.csv"
-is_verbose: true
+is_verbose: false

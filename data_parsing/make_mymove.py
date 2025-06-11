@@ -49,8 +49,13 @@ def main():
     parser.add_argument("--check_data", action="store_true", help="Check the data and plot histograms")
     parser.add_argument("--device_hz", type=int, default=50, help="Sampling frequency of the device in Hz")
     parser.add_argument("--five_classes", action="store_true", help="Use the 5-class label set")
+    parser.add_argument("--younger", action="store_true", help="Flag to indicate if the participant is younger")
+    parser.add_argument("--all", action="store_true", help="Flag to include both younger and older participants")
     args = parser.parse_args()
-
+    # if both --younger and --all are set, raise an error
+    if args.younger and args.all:
+        raise ValueError("Cannot use both --younger and --all flags together. Use --younger for younger participants only. Use --all for all participants.")
+    
     global CHECK_DATA, DEVICE_HZ, WINDOW_SEC, WINDOW_LEN, WINDOW_STEP_LEN, TARGET_WINDOW_LEN
     CHECK_DATA = args.check_data
     DEVICE_HZ = args.device_hz
@@ -62,14 +67,14 @@ def main():
     WINDOW_TOL = 0.01  # 1%
     TARGET_HZ = 30  # Hz
     TARGET_WINDOW_LEN = int(TARGET_HZ * WINDOW_SEC)
-    Classes_to_use = [#'sedentary_lying',
+    Classes_to_use = ['sedentary_lying',
                       'sedentary_sitting_other', 
                       'sedentary_sitting_transport', 
                       'upright_standing', 
                       'upright_stepping_low', 
                       'upright_stepping_moderate', 
-                      #'upright_stepping_vigorous', 
-                      #'cycling'
+                      'upright_stepping_vigorous', 
+                      'cycling'
                       ]
     DATAPATH = "/data/har/raw/mymove/"
     # DATAFILES = DATAPATH + "mymove/mymove_data_5s_acc_p*.npy"
@@ -77,17 +82,32 @@ def main():
     OUTDIR = f"/data/ssl_wearable/data/downstream/mymove_30Hz_{WINDOW_SEC}s/"
     if args.five_classes:
         OUTDIR = OUTDIR.rstrip('/') + "_5c/"
-    participants = [f'p{i}' for i in range(1, 14)]
+    
+    older_participants = [f'p{i}' for i in range(1, 14)] # older participants
+    younger_participants = [f'y{i}' for i in range(1, 3)]  # younger participants
+    if args.all:
+        OUTDIR = OUTDIR.rstrip('/') + "_all/"
+    elif args.younger and not args.all:
+        OUTDIR = OUTDIR.rstrip('/') + "_y/"
     try:
         if (WINDOW_SEC == 5 and DEVICE_HZ == 50):
-            DATAFILES = [DATAPATH + f"mymove_data_5s_acc_{p}.npy" for p in participants]
-            LABELFILES = [DATAPATH + f"mymove_label_5s_acc_{p}.npy" for p in participants]
+            DATAFILES = [DATAPATH + f"mymove_data_5s_acc_{p}.npy" for p in older_participants]
+            LABELFILES = [DATAPATH + f"mymove_label_5s_acc_{p}.npy" for p in older_participants]
         elif (WINDOW_SEC == 5 and DEVICE_HZ == 30):
-            DATAFILES = [DATAPATH + f"np_data/mymove_data_acc_5sec_30hz_{p}.npy" for p in participants]
-            LABELFILES = [DATAPATH + f"np_data/mymove_label_acc_5sec_30hz_{p}.npy" for p in participants]
+            DATAFILES = [DATAPATH + f"np_data/mymove_data_acc_5sec_30hz_{p}.npy" for p in older_participants]
+            LABELFILES = [DATAPATH + f"np_data/mymove_label_acc_5sec_30hz_{p}.npy" for p in older_participants]
         elif (WINDOW_SEC == 10 and DEVICE_HZ == 30):
-            DATAFILES = [DATAPATH + f"np_data/mymove_data_acc_10sec_30hz_{p}.npy" for p in participants]
-            LABELFILES = [DATAPATH + f"np_data/mymove_label_acc_10sec_30hz_{p}.npy" for p in participants]
+            if args.all:
+                DATAFILES = [DATAPATH + f"np_data/mymove_data_acc_10sec_30hz_{p}.npy" for p in older_participants]
+                LABELFILES = [DATAPATH + f"np_data/mymove_label_acc_10sec_30hz_{p}.npy" for p in older_participants]
+                DATAFILES.extend([DATAPATH + f"np_data_young_adult/mymove_data_acc_10sec_30hz_{p}.npy" for p in younger_participants])
+                LABELFILES.extend([DATAPATH + f"np_data_young_adult/mymove_label_acc_10sec_30hz_{p}.npy" for p in younger_participants])
+            elif args.younger:
+                DATAFILES = [DATAPATH + f"np_data_young_adult/mymove_data_acc_10sec_30hz_{p}.npy" for p in younger_participants]
+                LABELFILES = [DATAPATH + f"np_data_young_adult/mymove_label_acc_10sec_30hz_{p}.npy" for p in younger_participants]
+            else:
+                DATAFILES = [DATAPATH + f"np_data/mymove_data_acc_10sec_30hz_{p}.npy" for p in older_participants]
+                LABELFILES = [DATAPATH + f"np_data/mymove_label_acc_10sec_30hz_{p}.npy" for p in older_participants]
         else:
             raise ValueError(f"Unavailable window size (={WINDOW_SEC}) and device frequency (={DEVICE_HZ}) combination")
     except Exception as e:

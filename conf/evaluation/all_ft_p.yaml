@@ -11,9 +11,9 @@ flip_net_ft: true
 flip_net_random_mlp: false
 harnet_ft: false
 mlp_net: false
-load_weights: false
+load_weights: true
 load_personalized_weights: false
-freeze_weight: false
+freeze_weight: true
 # flip_net_path: /data/ssl_wearable/model/2025-04-08_14:42:33tmp.pt # trained on realworld_wisdm (frozen representation) (5 classes) fine tuned on MyMove LOSO
 # flip_net_path: /data/ssl_wearable/model/2025-04-25_12:37:29tmp.pt # trained on realworld_wisdm  (frozen representation) (5 classes)fine tuned on MyMove LOSO (50 epochs, lr=0.001, early stopping 50)
 # flip_net_path: /data/ssl_wearable/model/2025-04-26_06:02:34tmp.pt #  (frozen representation) (5 classes)fine tuned on MyMove LOSO (50 epochs, lr=0.001, early stopping 50)

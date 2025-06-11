@@ -7,14 +7,14 @@ flip_net_mlp: false
 harnet_ft: false
 load_weights: false
 load_personalized_weights: false
-evaluation_name: transformer
+evaluation_name: AttnTCN
 input_size: 300
-num_epoch: 10
+num_epoch: 50
 num_workers: 6
 learning_rate: 0.001
 patience: 100
 freeze_weight: false
 mlp_net: false
 use_early_stopping: true
-flip_net_path: /data/ssl_wearable/model/2025-04-15_00:30:31tmp.pt #Transformer model trained on REALWORLD_WISDM (5 classes) 50 epochs, lr=0.001
+flip_net_path: /data/ssl_wearable/model/2025-05-22_00:24:43tmp.pt #AttnTCN model trained on REALWORLD_WISDM (5 classes) 50 epochs, lr=0.001
 

@@ -1,0 +1,6 @@
+embed_dim: 128
+num_heads: 8
+
+name: "AttnTCN_inp${evaluation.input_size}_head${model.num_heads}_embed${model.embed_dim}_out${data.output_size}"
+resnet_version: 0
+is_ae: false

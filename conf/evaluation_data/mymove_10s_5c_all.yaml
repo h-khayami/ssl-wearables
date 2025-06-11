@@ -1,0 +1,14 @@
+data_root: /data/ssl_wearable/data/downstream/cross_dataset_mapping/testing_all
+X_path: "${evaluation_data.data_root}/X.npy"
+Y_path:  "${evaluation_data.data_root}/Y.npy"
+PID_path:  "${evaluation_data.data_root}/pid.npy"
+sample_rate: 30
+task_type: 'classify'
+dataset_name: 'mymove_10s_5c_all'
+subject_count: -1 # -1 means all subjects
+ratio2keep: 1
+weighted_sample: true
+batch_size: 50
+held_one_subject_out: true
+output_size: 5
+weighted_loss_fn: true

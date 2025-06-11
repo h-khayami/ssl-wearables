@@ -9,13 +9,11 @@ OUT_DIR = DATA_DIR + "cross_dataset_mapping"
 # read activity label mapping config json file
 CONFIG_DIR = os.path.dirname(__file__)
 CONFIG_DIR = os.path.join(CONFIG_DIR, "../conf/")
-with open(os.path.join(CONFIG_DIR, "cross_dataset_mapping/Activity_label_mapping v2 5c.json"), "r") as f:
+with open(os.path.join(CONFIG_DIR, "cross_dataset_mapping/Activity_label_mapping v3 5c.json"), "r") as f:
     activity_labels = json.load(f)
 
-mapper = DatasetLabelMapper(os.path.join(CONFIG_DIR, "cross_dataset_mapping/Activity_label_mapping v2 5c.json"))
+mapper = DatasetLabelMapper(os.path.join(CONFIG_DIR, "cross_dataset_mapping/Activity_label_mapping v3 5c.json"))
 
-testing_datasets = activity_labels["testing_datasets"]
-print(f"Testing datasets: {testing_datasets}")
 
 def process_datasets(datasets, output_subdir):
     processed_P = np.array([])
@@ -71,28 +69,12 @@ training_datasets = activity_labels["training_datasets"]
 print(f"Training datasets: {training_datasets}")
 process_datasets(training_datasets, "training")
 
-# Process testing datasets
+# Process testing datasets (Set MyMove directory to mymove_30Hz_10s for older adults only in Activity_label_mapping v2 5c.json)
 testing_datasets = activity_labels["testing_datasets"]
 print(f"Testing datasets: {testing_datasets}")
 process_datasets(testing_datasets, "testing")
 
-# X = np.load(os.path.join(IN_DIR, "X.npy"))
-# Y = np.load(os.path.join(IN_DIR, "Y.npy"))
-# # T = np.load(os.path.join(IN_DIR, "time.npy"))
-# P = np.load(os.path.join(IN_DIR, "pid.npy"))
-# print(f"Loaded data with shape {X.shape}")
-# print(f"Loaded label with shape {Y.shape}")
-
-# mask = np.isin(Y, Classes_to_use)
-# X = X[mask]
-# Y = Y[mask]
-# # T = T[mask]
-# P = P[mask]
-# print(f"Filtered data with shape {X.shape}")
-# print(f"Filtered label with shape {Y.shape}")
-
-# os.system(f"mkdir -p {OUTDIR}")
-# np.save(os.path.join(OUTDIR, "X"), X)
-# np.save(os.path.join(OUTDIR, "Y"), Y)
-# # np.save(os.path.join(OUTDIR, "time"), T)
-# np.save(os.path.join(OUTDIR, "pid"), P)
+# Process testing datasets (Set MyMove directory to mymove_30Hz_10s_all for older and younger adults in Activity_label_mapping v3 5c.json)
+testing_datasets = activity_labels["testing_datasets"]
+print(f"Testing datasets: {testing_datasets}")
+process_datasets(testing_datasets, "testing_all")

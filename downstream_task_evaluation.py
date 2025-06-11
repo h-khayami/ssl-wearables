@@ -16,7 +16,7 @@ import pathlib
 import json
 
 # SSL net
-from sslearning.models.accNet import cnn1, SSLNET, Resnet, EncoderMLP, IMUMLPClassifier, IMUTransformerClassifier
+from sslearning.models.accNet import cnn1, SSLNET, Resnet, EncoderMLP, IMUMLPClassifier, IMUTransformerClassifier, CNNGRUClassifier, DeepConvLSTM, BiGRUClassifier, AttnTCN, HARTransformer
 from sslearning.scores import classification_scores, classification_report
 import copy
 from sklearn import preprocessing
@@ -331,7 +331,7 @@ def train_mlp(model, train_loader, val_loader, cfg, my_device, weights, model_pa
         )
         print(print_msg)
         # Update the learning rate
-        scheduler.step()  #uncomment this line if you want to use learning rate scheduler
+        # scheduler.step()  #uncomment this line if you want to use learning rate scheduler
         current_lr = optimizer.param_groups[0]['lr']
         print(f"Learning Rate: {current_lr}")
         # Only use early stopping if enabled
@@ -442,6 +442,14 @@ def extract_features(model, data_loader, my_device, cfg):
 def init_model(cfg, my_device):
     if cfg.model.is_ae:
         model = EncoderMLP(cfg.data.output_size)
+    elif cfg.model.name.split("_")[0] == "resnet_transformer":
+        model = Resnet(
+            output_size=cfg.data.output_size,
+            is_eva=False,
+            resnet_version=cfg.model.resnet_version,
+            epoch_len=cfg.dataloader.epoch_len,
+            is_transformer=True,
+        )
     elif cfg.model.resnet_version > 0:
         model = Resnet(
             output_size=cfg.data.output_size,
@@ -463,6 +471,40 @@ def init_model(cfg, my_device):
             num_heads=cfg.model.transformer_num_heads,
             num_layers=cfg.model.transformer_num_layers,
             num_classes=cfg.data.output_size
+        )
+    elif cfg.model.name.split("_")[0] == "CNNGRU":
+        model = CNNGRUClassifier(
+            input_channels=3, 
+            hidden_size=cfg.model.hidden_size, 
+            num_classes=cfg.data.output_size
+        )
+    elif cfg.model.name.split("_")[0] == "DeepConvLSTM":
+        model = DeepConvLSTM(
+            input_channels=3, 
+            num_classes=cfg.data.output_size
+        )
+    elif cfg.model.name.split("_")[0] == "BiGRU":
+        model = BiGRUClassifier(
+            input_channels=3, 
+            hidden_size=cfg.model.hidden_size, 
+            num_layers=cfg.model.num_layers,
+            num_classes=cfg.data.output_size
+        )
+    elif cfg.model.name.split("_")[0] == "AttnTCN":
+        model = AttnTCN(
+            input_channels=3, 
+            num_classes=cfg.data.output_size,
+            num_heads=cfg.model.num_heads,
+            embed_dim=cfg.model.embed_dim,
+        )
+    elif cfg.model.name.split("_")[0] == "HARTransformer":
+        model = HARTransformer(
+            input_channels=3, 
+            d_model=cfg.model.d_model,
+            seq_length=cfg.evaluation.input_size,
+            num_classes=cfg.data.output_size,
+            num_heads=cfg.model.num_heads,
+            num_layers=cfg.model.num_layers,
         )
     else:
         model = SSLNET(
@@ -930,11 +972,11 @@ def evaluate_saved_model(test_loader, cfg, my_device, log_dir, model_path_suffix
     X_features, X_logits = extract_features(model, test_loader, my_device, cfg)
     # Save extracted features in the dataset directory
     dataset_dir = os.path.dirname(cfg.evaluation_data.X_path)
-    features_path = os.path.join(dataset_dir, f"extracted_features_resnet_SSL.npz")
+    features_path = os.path.join(dataset_dir, f"extracted_features_{cfg.model.name.split('_')[0]}.npz")
     np.savez(features_path, features=X_features, labels=y_test, pids=pid_test)
     print(f"Extracted features saved to {features_path}")
     # Save logits in the dataset directory
-    logits_path = os.path.join(dataset_dir, f"extracted_logits_resnet_SSL.npz")
+    logits_path = os.path.join(dataset_dir, f"extracted_logits_{cfg.model.name.split('_')[0]}.npz")
     np.savez(logits_path, logits=X_logits, labels=y_test, pids=pid_test)
     print(f"Extracted logits saved to {logits_path}")
     my_pids = np.unique(pid_test)
@@ -1536,7 +1578,7 @@ def train_and_evaluate_mlp(X_feats, y, cfg, my_device, logger, log_dir, groups=N
     log_path = os.path.join(log_dir, report_filename)
     classification_report(results, log_path)
 
-@hydra.main(config_path="conf", config_name="config_eva_mlp_ft")
+@hydra.main(config_path="conf", config_name="config_eva_mlp_cross")
 def main(cfg):
     """Evaluate hand-crafted vs deep-learned features"""
 

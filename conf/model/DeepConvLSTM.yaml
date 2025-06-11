@@ -1,0 +1,3 @@
+name: "DeepConvLSTM_inp${evaluation.input_size}_out${data.output_size}"
+resnet_version: 0
+is_ae: false

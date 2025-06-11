@@ -670,6 +670,7 @@ class Resnet(nn.Module):
         epoch_len=10,
         is_mtl=False,
         is_simclr=False,
+        is_transformer=False,
     ):
         super(Resnet, self).__init__()
 
@@ -749,6 +750,14 @@ class Resnet(nn.Module):
         if is_eva:
             self.classifier = EvaClassifier(
                 input_size=out_channels, output_size=output_size
+            )
+        elif is_transformer:
+            self.classifier = EvaTransformerClassifier(
+                input_size=out_channels,
+                embed_dim=512,
+                num_heads=8,
+                num_layers=2,
+                output_size=output_size,
             )
         elif is_mtl:
             self.aot_h = Classifier(
@@ -961,30 +970,83 @@ class IMUMLPClassifier(nn.Module):
         output = self.head(x_encoded)
         return output
     
+class EvaTransformerClassifier(nn.Module):
+    def __init__(self, input_size=1024, embed_dim=512, num_heads=8, num_layers=2, output_size=2, dropout=0.1):
+        super(EvaTransformerClassifier, self).__init__()
+        
+        # Input projection to match transformer dimension
+        self.input_projection = nn.Linear(input_size, embed_dim)
+        
+        # Positional encoding (learnable, for a fixed sequence length of 1)
+        self.pos_embedding = nn.Parameter(torch.randn(1, 1, embed_dim))
+        
+        # Transformer encoder
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=embed_dim, 
+            nhead=num_heads,
+            dim_feedforward=embed_dim * 4,
+            dropout=dropout,
+            batch_first=True  # Use batch_first=True if PyTorch >= 1.9.0
+        )
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        
+        # Classification head
+        self.dropout = nn.Dropout(dropout)
+        self.head = nn.Linear(embed_dim, output_size)
+    
+    def forward(self, x):
+        # Input: [batch, input_size] (ResNet features)
+        batch_size = x.size(0)
+        
+        # Project input to embedding dimension
+        x = self.input_projection(x)  # [batch, embed_dim]
+        x = x.unsqueeze(1)  # [batch, 1, embed_dim] - sequence length = 1
+        
+        # Add positional encoding
+        x = x + self.pos_embedding
+        
+        # Apply transformer
+        x = self.transformer_encoder(x)  # [batch, 1, embed_dim]
+        
+        # Remove sequence dimension
+        x = x.squeeze(1)  # [batch, embed_dim]
+        
+        # Classification
+        x = self.dropout(x)
+        out = self.head(x)
+        return out
+    
 class IMUTransformerClassifier(nn.Module):
     def __init__(self, input_dim=3, embed_dim=128, seq_length=300, num_heads=4, num_layers=2, num_classes=5):
         super().__init__()
+        # Feature extraction components
         self.embedding = nn.Linear(input_dim, embed_dim)
         self.pos_embedding = nn.Embedding(seq_length, embed_dim)
-        encoder_layer = nn.TransformerEncoderLayer(d_model=embed_dim, nhead=num_heads, 
-                                                   dim_feedforward=embed_dim*4)#, batch_first=True) not supported in Pytorch 1.7.0
+        encoder_layer = nn.TransformerEncoderLayer(d_model=embed_dim, nhead=num_heads,
+                                                dim_feedforward=embed_dim*4)  # batch_first=True not supported in PyTorch 1.7.0
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        self.head = nn.Linear(embed_dim, num_classes)
         
-    def forward(self, x):
+        # Classification head
+        self.head = nn.Linear(embed_dim, num_classes)
+    
+    def feature_extractor(self, x):
+        """Extract features before classification head"""
         B, T, _ = x.shape
         x = self.embedding(x)
         pos = torch.arange(T, device=x.device).unsqueeze(0).expand(B, T)
         x = x + self.pos_embedding(pos)
-        x = x.transpose(0, 1)  # Transpose to (T, B, embed_dim) comment this if using batch_first=True and PyTorch >= 1.9.0
+        x = x.transpose(0, 1)  # Transpose to (T, B, embed_dim)
         x = self.transformer_encoder(x)
-        x = x.transpose(0, 1)  # Transpose back to (B, T, embed_dim) comment this if using batch_first=True and PyTorch >= 1.9.0
-        x = x.mean(dim=1)  # Global average pooling over time
-        out = self.head(x)
+        x = x.transpose(0, 1)  # Transpose back to (B, T, embed_dim)
+        features = x.mean(dim=1)  # Global average pooling over time
+        return features
+    
+    def forward(self, x):
+        features = self.feature_extractor(x)
+        out = self.head(features)
         return out
 
-
-class DeepConvLSTM(nn.Module): # NOT TESTED YET
+class DeepConvLSTM(nn.Module): 
     """Deep ConvLSTM model for time series classification.
     Args:
         input_channels (int): Number of input channels.
@@ -1006,27 +1068,31 @@ class DeepConvLSTM(nn.Module): # NOT TESTED YET
         self.dropout = nn.Dropout(0.5)
         self.fc = nn.Linear(128, num_classes)
     
-    def forward(self, x):
+    def feature_extractor(self, x):
+        """Extract features before classification head"""
         # x shape: [batch, channels, time]
         x = self.conv_layers(x)
         # Transpose for LSTM: [batch, time, features]
         x = x.permute(0, 2, 1)
         x, _ = self.lstm(x)
         # Take final time step
-        x = x[:, -1, :]
-        x = self.dropout(x)
+        features = x[:, -1, :]  # [batch, hidden_size]
+        return features
+    
+    def forward(self, x):
+        features = self.feature_extractor(x)
+        x = self.dropout(features)
         return self.fc(x)
 
-class AttnTCN(nn.Module): # NOT TESTED YET
+class AttnTCN(nn.Module): 
     """Attention-based Temporal Convolutional Network for time series classification.
     Args:
         input_channels (int): Number of input channels.
-        seq_length (int): Length of the input sequence.
         num_classes (int): Number of output classes.
+        num_heads (int): Number of attention heads.
     """
-    def __init__(self, input_channels=3, seq_length=300, num_classes=5):
+    def __init__(self, input_channels=3, num_classes=5, num_heads=4, embed_dim=128):
         super().__init__()
-        
         # Temporal convolutions
         self.tcn = nn.Sequential(
             nn.Conv1d(input_channels, 64, kernel_size=5, stride=1, padding=2, dilation=1),
@@ -1039,39 +1105,40 @@ class AttnTCN(nn.Module): # NOT TESTED YET
             nn.BatchNorm1d(128),
             nn.ReLU(),
         )
-        
         # Self-attention layer
-        self.attention = nn.MultiheadAttention(embed_dim=128, num_heads=4)
+        self.attention = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads)
         self.layer_norm = nn.LayerNorm(128)
-        
         # Classification head
         self.dropout = nn.Dropout(0.5)
         self.fc = nn.Linear(128, num_classes)
     
-    def forward(self, x):
+    def feature_extractor(self, x):
+        """Extract features before classification head"""
         # x shape: [batch, channels, time]
         batch_size = x.size(0)
-        
         # Apply TCN
         x = self.tcn(x)  # [batch, 128, time]
-        
         # Prepare for self-attention (seq_len, batch, features)
         x = x.permute(2, 0, 1)
-        
         # Apply self-attention
         attn_output, _ = self.attention(x, x, x)
         x = x + attn_output  # Residual connection
         x = self.layer_norm(x)
-        
         # Global temporal pooling
         x = x.permute(1, 0, 2)  # [batch, time, features]
-        x = torch.mean(x, dim=1)  # [batch, features]
-        
-        # Classification
-        x = self.dropout(x)
+        features = torch.mean(x, dim=1)  # [batch, features]
+        return features
+    
+    def forward(self, x):
+        features = self.feature_extractor(x)
+        x = self.dropout(features)
         return self.fc(x)
     
-class HARTransformer(nn.Module): # NOT TESTED YET
+import math
+import torch
+import torch.nn as nn
+
+class HARTransformer(nn.Module):  # NOT TESTED YET
     """Transformer model for Human Activity Recognition (HAR).
     Args:
         input_channels (int): Number of input channels.
@@ -1079,29 +1146,24 @@ class HARTransformer(nn.Module): # NOT TESTED YET
         num_classes (int): Number of output classes.
         d_model (int): Dimension of the model.
     """
-    def __init__(self, input_channels=3, seq_length=300, num_classes=5, d_model=128):
+    def __init__(self, input_channels=3, seq_length=300, num_classes=5, d_model=128, num_heads=4, num_layers=4):
         super().__init__()
-        
         # Initial embedding
         self.embedding = nn.Sequential(
             nn.Conv1d(input_channels, d_model, kernel_size=5, padding=2),
             nn.ReLU()
         )
-        
         # Positional encoding
         self.register_buffer('pos_encoding', self._create_pos_encoding(seq_length, d_model))
-        
         # Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model, 
-            nhead=8, 
+            d_model=d_model,
+            nhead=num_heads,
             dim_feedforward=512,
             dropout=0.1,
-            activation='gelu',
-            batch_first=True
+            activation='gelu'
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=4)
-        
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         # Classification head
         self.classifier = nn.Linear(d_model, num_classes)
     
@@ -1113,7 +1175,8 @@ class HARTransformer(nn.Module): # NOT TESTED YET
         pos_enc[:, 1::2] = torch.cos(pos * div_term)
         return pos_enc
     
-    def forward(self, x):
+    def feature_extractor(self, x):
+        """Extract features before classification head"""
         # x shape: [batch, channels, time]
         batch_size = x.size(0)
         
@@ -1128,7 +1191,128 @@ class HARTransformer(nn.Module): # NOT TESTED YET
         x = self.transformer(x)
         
         # Global pooling
-        x = torch.mean(x, dim=1)
+        features = torch.mean(x, dim=1)  # [batch, d_model]
         
-        # Classification
+        return features
+    
+    def forward(self, x):
+        features = self.feature_extractor(x)
+        return self.classifier(features)
+    
+class BiGRUClassifier(nn.Module):
+    def __init__(self, input_channels=3, hidden_size=128, num_layers=2, num_classes=5):
+        super().__init__()
+        self.gru = nn.GRU(
+            input_size=input_channels,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            bidirectional=True,
+            dropout=0.3 if num_layers > 1 else 0
+        )
+        self.dropout = nn.Dropout(0.5)
+        # *2 because of bidirectional
+        self.classifier = nn.Linear(hidden_size * 2, num_classes)
+    
+    def feature_extractor(self, x):
+        """Extract features before classification head"""
+        # Input: [batch, channels=3, time=300]
+        x = x.permute(0, 2, 1)  # Convert to [batch, time=300, channels=3]
+        # GRU forward pass
+        gru_out, _ = self.gru(x)  # Output: [batch, time=300, hidden_size*2]
+        # Use final output
+        features = gru_out[:, -1, :]  # Take last time step: [batch, hidden_size*2]
+        return features
+    
+    def forward(self, x):
+        features = self.feature_extractor(x)
+        x = self.dropout(features)
+        return self.classifier(x)
+
+class CNNGRUClassifier(nn.Module):
+    def __init__(self, input_channels=3, hidden_size=128, num_classes=5):
+        super().__init__()
+        
+        # CNN feature extractor
+        self.cnn = nn.Sequential(
+            nn.Conv1d(input_channels, 64, kernel_size=5, padding=2),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Conv1d(64, 128, kernel_size=5, padding=2),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Conv1d(128, 128, kernel_size=5, padding=2),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+        )
+        
+        # GRU for temporal modeling
+        self.gru = nn.GRU(
+            input_size=128,
+            hidden_size=hidden_size,
+            num_layers=2,
+            batch_first=True,
+            bidirectional=True,
+            dropout=0.3
+        )
+        
+        self.dropout = nn.Dropout(0.5)
+        self.classifier = nn.Linear(hidden_size * 2, num_classes)
+    
+    def feature_extractor(self, x):
+        """Extract features before classification head"""
+        # Input: [batch, channels=3, time=300]
+        # CNN feature extraction
+        x = self.cnn(x)  # Output: [batch, 128, time=300]
+        # Prepare for GRU
+        x = x.permute(0, 2, 1)  # Convert to [batch, time=300, features=128]
+        # GRU temporal modeling
+        gru_out, _ = self.gru(x)  # Output: [batch, time=300, hidden_size*2]
+        # Global max pooling (alternative to using last output)
+        features = torch.max(gru_out, dim=1)[0]  # [batch, hidden_size*2]
+        return features
+    
+    def forward(self, x):
+        features = self.feature_extractor(x)
+        x = self.dropout(features)
+        return self.classifier(x)
+    
+class AttentionGRUClassifier(nn.Module):
+    def __init__(self, input_channels=3, hidden_size=128, num_classes=5):
+        super().__init__()
+        
+        self.gru = nn.GRU(
+            input_size=input_channels,
+            hidden_size=hidden_size,
+            num_layers=2,
+            batch_first=True,
+            bidirectional=True,
+            dropout=0.3
+        )
+        
+        # Attention mechanism
+        self.attention = nn.Sequential(
+            nn.Linear(hidden_size * 2, hidden_size),
+            nn.Tanh(),
+            nn.Linear(hidden_size, 1)
+        )
+        
+        self.dropout = nn.Dropout(0.5)
+        self.classifier = nn.Linear(hidden_size * 2, num_classes)
+        
+    def forward(self, x):
+        # Input: [batch, channels=3, time=300]
+        x = x.permute(0, 2, 1)  # Convert to [batch, time=300, channels=3]
+        
+        # GRU forward pass
+        gru_out, _ = self.gru(x)  # Output: [batch, time=300, hidden_size*2]
+        
+        # Attention weights
+        attn_weights = self.attention(gru_out)  # [batch, time=300, 1]
+        attn_weights = torch.softmax(attn_weights.squeeze(-1), dim=1)  # [batch, time=300]
+        
+        # Attended representation
+        x = torch.sum(gru_out * attn_weights.unsqueeze(-1), dim=1)  # [batch, hidden_size*2]
+        
+        x = self.dropout(x)
         return self.classifier(x)

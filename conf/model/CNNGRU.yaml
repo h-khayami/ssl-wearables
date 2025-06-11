@@ -1,0 +1,5 @@
+hidden_size: 128
+
+name: "CNNGRU_inp${evaluation.input_size}_hidden${model.hidden_size}_out${data.output_size}"
+resnet_version: 0
+is_ae: false
